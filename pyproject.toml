@@ -24,7 +24,9 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Topic :: Software Development",
 ]
-dependencies = []
+dependencies = [
+  "rich>=13.7",
+]
 
 [project.scripts]
 deepseek = "deepseek_cli.cli:main"
