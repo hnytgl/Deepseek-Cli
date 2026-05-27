@@ -3,14 +3,14 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
-from rich.align import Align
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.progress import BarColumn, Progress, TextColumn
 from rich.prompt import Confirm, Prompt
+from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 
@@ -30,22 +30,38 @@ class RichAgentEvents(AgentEventHandler):
     step: int = 0
     max_steps: int = 0
     current_status: str = "等待任务"
+    streaming_answer: str = ""
+    streaming_reasoning: str = ""
     logs: list[tuple[str, str]] = field(default_factory=list)
 
     def on_step(self, step: int, max_steps: int) -> None:
         self.step = step
         self.max_steps = max_steps
         self.current_status = "请求 DeepSeek"
+        self.streaming_answer = ""
+        self.streaming_reasoning = ""
+        self._render()
+
+    def on_model_delta(self, content: str) -> None:
+        self.current_status = "流式输出回复"
+        self.streaming_answer += content
         self._render()
 
     def on_model_message(self, content: str) -> None:
         self.current_status = "收到模型回复"
-        self._add_log("助手", _trim(content, 1200))
+        if not self.streaming_answer:
+            self._add_log("助手", _trim(content, 1200))
+        self._render()
+
+    def on_reasoning_delta(self, content: str) -> None:
+        self.current_status = "流式输出思考"
+        self.streaming_reasoning += content
         self._render()
 
     def on_reasoning(self, content: str) -> None:
         self.current_status = "读取思考内容"
-        self._add_log("思考", _trim(content, 1600))
+        if not self.streaming_reasoning:
+            self._add_log("思考", _trim(content, 1600))
         self._render()
 
     def on_tool_start(self, name: str, arguments: dict[str, Any]) -> None:
@@ -65,6 +81,10 @@ class RichAgentEvents(AgentEventHandler):
     def _render(self) -> None:
         self.console.clear()
         self.console.print(render_header(self.step, self.max_steps, self.current_status))
+        if self.streaming_reasoning:
+            self.console.print(Panel(_trim(self.streaming_reasoning, 1600), title="思考", border_style="magenta"))
+        if self.streaming_answer:
+            self.console.print(Panel(Markdown(_trim(self.streaming_answer, 2200)), title="回复草稿", border_style="green"))
         for title, body in self.logs:
             style = "cyan" if title in {"工具调用", "工具结果"} else "magenta" if title == "思考" else "green"
             self.console.print(Panel(body, title=title, border_style=style))
@@ -88,12 +108,13 @@ def render_header(step: int, max_steps: int, status: str) -> Panel:
     return Panel(table, border_style="cyan")
 
 
-def print_welcome(console: Console, cwd: Path, model: str) -> None:
+def print_welcome(console: Console, cwd: Path, model: str, session_name: str | None) -> None:
     body = Table.grid(padding=(0, 1))
     body.add_column(style="bold")
     body.add_column()
     body.add_row("工作区", str(cwd))
     body.add_row("模型", model)
+    body.add_row("会话", session_name or "未持久化")
     body.add_row("命令", "/exit 退出, /clear 清空上下文, /help 帮助")
     console.print(Panel(body, title="DeepSeek CLI", border_style="cyan"))
 
@@ -106,18 +127,25 @@ def print_help(console: Console) -> None:
             "/help：显示帮助\n\n"
             "直接输入任务即可，例如：\n"
             "  帮我阅读这个项目并修复测试\n"
-            "  给当前仓库补 README 和单元测试",
+            "  创建分支，完成修改，提交并打开 PR",
             title="帮助",
             border_style="cyan",
         )
     )
 
 
-def run_rich_interactive(agent: DeepSeekAgent, *, cwd: Path, model: str) -> int:
+def run_rich_interactive(
+    agent: DeepSeekAgent,
+    *,
+    cwd: Path,
+    model: str,
+    session_name: str | None = None,
+    on_turn_done: Callable[[], None] | None = None,
+) -> int:
     console = Console()
     events = RichAgentEvents(console)
     agent.events = events
-    print_welcome(console, cwd, model)
+    print_welcome(console, cwd, model, session_name)
 
     while True:
         try:
@@ -144,6 +172,8 @@ def run_rich_interactive(agent: DeepSeekAgent, *, cwd: Path, model: str) -> int:
             continue
 
         answer = agent.run_turn(prompt)
+        if on_turn_done:
+            on_turn_done()
         console.print(Panel(Markdown(answer or "任务完成。"), title="最终回复", border_style="green"))
 
 
@@ -152,4 +182,13 @@ class RichToolConfirmer:
         self.console = console or Console()
 
     def __call__(self, prompt: str) -> bool:
+        return Confirm.ask(f"[yellow]{prompt}[/yellow]", default=False, console=self.console)
+
+
+class RichDiffConfirmer:
+    def __init__(self, console: Console | None = None) -> None:
+        self.console = console or Console()
+
+    def __call__(self, prompt: str, diff: str) -> bool:
+        self.console.print(Panel(Syntax(diff, "diff", word_wrap=True), title="文件变更预览", border_style="yellow"))
         return Confirm.ask(f"[yellow]{prompt}[/yellow]", default=False, console=self.console)
