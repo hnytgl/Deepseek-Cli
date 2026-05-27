@@ -7,6 +7,7 @@ from pathlib import Path
 from .agent import AgentConfig, DeepSeekAgent
 from .api import DEFAULT_MODEL, DeepSeekAPIError, DeepSeekClient
 from .tools import ToolExecutor
+from .ui import RichAgentEvents, RichToolConfirmer, run_rich_interactive
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -22,6 +23,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--yes", "-y", action="store_true", help="Auto-approve tool execution.")
     parser.add_argument("--max-steps", type=int, default=24, help="Maximum model/tool loop steps.")
     parser.add_argument("--temperature", type=float, default=0.2, help="Sampling temperature.")
+    parser.add_argument("--plain", action="store_true", help="Use plain input/output instead of the Rich TUI.")
     parser.add_argument("--version", action="version", version="deepseek-codex-cli 0.1.0")
     return parser
 
@@ -38,7 +40,7 @@ def create_agent(args: argparse.Namespace) -> DeepSeekAgent:
         base_url=args.base_url,
         model=args.model,
     )
-    tools = ToolExecutor(cwd, auto_approve=args.yes)
+    tools = ToolExecutor(cwd, auto_approve=args.yes, ask=RichToolConfirmer())
     return DeepSeekAgent(
         client=client,
         tools=tools,
@@ -50,7 +52,7 @@ def run_interactive(agent: DeepSeekAgent) -> int:
     print("DeepSeek CLI. Type /exit to quit, /clear to reset the conversation.")
     while True:
         try:
-            prompt = input("\n深问> ").strip()
+            prompt = input("\nDeepSeek> ").strip()
         except (EOFError, KeyboardInterrupt):
             print()
             return 0
@@ -80,11 +82,18 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if args.prompt:
+        if not args.plain:
+            from rich.console import Console
+
+            console = Console()
+            agent.events = RichAgentEvents(console)
         answer = agent.run_turn(" ".join(args.prompt))
         if answer:
             print(f"\n{answer}")
         return 0
-    return run_interactive(agent)
+    if args.plain:
+        return run_interactive(agent)
+    return run_rich_interactive(agent, cwd=Path(args.cwd).expanduser().resolve(), model=agent.client.model)
 
 
 if __name__ == "__main__":
