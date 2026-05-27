@@ -42,10 +42,30 @@ def test_agent_executes_tool_loop(tmp_path: Path) -> None:
     agent = DeepSeekAgent(
         client=FakeClient(),  # type: ignore[arg-type]
         tools=ToolExecutor(tmp_path, auto_approve=True),
-        config=AgentConfig(cwd=tmp_path, max_steps=4),
+        config=AgentConfig(cwd=tmp_path, max_steps=4, stream=False),
     )
 
     answer = agent.run_turn("create a file")
 
     assert answer == "created done.txt"
     assert (tmp_path / "done.txt").read_text(encoding="utf-8") == "ok"
+
+
+class StreamingFakeClient:
+    def chat_stream(self, payload: dict[str, Any]):
+        _ = payload
+        yield {"choices": [{"delta": {"content": "hello "}}]}
+        yield {"choices": [{"delta": {"content": "stream"}}]}
+
+    def chat(self, payload: dict[str, Any]) -> dict[str, Any]:
+        raise AssertionError("streaming path should not call chat")
+
+
+def test_agent_streams_text(tmp_path: Path) -> None:
+    agent = DeepSeekAgent(
+        client=StreamingFakeClient(),  # type: ignore[arg-type]
+        tools=ToolExecutor(tmp_path, auto_approve=True),
+        config=AgentConfig(cwd=tmp_path, max_steps=4, stream=True),
+    )
+
+    assert agent.run_turn("say hi") == "hello stream"
