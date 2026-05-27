@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import shlex
 
 
 class PermissionError(RuntimeError):
@@ -13,6 +14,8 @@ class PermissionConfig:
     approval: str = "ask"
     sandbox: str = "workspace"
     shell: bool = True
+    allow_commands: tuple[str, ...] = ()
+    deny_commands: tuple[str, ...] = ()
 
     @property
     def auto_approve(self) -> bool:
@@ -39,3 +42,25 @@ class PermissionConfig:
             raise PermissionError("Shell tools are disabled in read-only approval mode.")
         if not self.shell:
             raise PermissionError("Shell tools are disabled by configuration.")
+
+    def check_command(self, command: str) -> None:
+        self.check_shell()
+        name = command_name(command)
+        if not name:
+            raise PermissionError("Empty shell command is not allowed.")
+        if self.deny_commands and name in self.deny_commands:
+            raise PermissionError(f"Command is blocked by policy: {name}")
+        if self.allow_commands and name not in self.allow_commands:
+            allowed = ", ".join(self.allow_commands)
+            raise PermissionError(f"Command is not in allowlist: {name}. Allowed: {allowed}")
+
+
+def command_name(command: str) -> str:
+    try:
+        parts = shlex.split(command, posix=False)
+    except ValueError:
+        parts = command.strip().split()
+    if not parts:
+        return ""
+    executable = parts[0].strip("\"'")
+    return Path(executable).name.lower()
