@@ -4,9 +4,12 @@ import json
 import os
 import platform
 import subprocess
+import difflib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
+
+from .policy import PermissionConfig
 
 
 class ToolError(RuntimeError):
@@ -28,6 +31,17 @@ def _resolve_workspace_path(cwd: Path, user_path: str) -> Path:
     if not path.is_absolute():
         path = cwd / path
     return path.resolve()
+
+
+def _unified_diff(path: Path, old: str, new: str) -> str:
+    return "".join(
+        difflib.unified_diff(
+            old.splitlines(keepends=True),
+            new.splitlines(keepends=True),
+            fromfile=f"a/{path.name}",
+            tofile=f"b/{path.name}",
+        )
+    )
 
 
 def tool_definitions() -> list[dict[str, Any]]:
@@ -120,6 +134,62 @@ def tool_definitions() -> list[dict[str, Any]]:
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "git_status",
+                "description": "Show git branch and working tree status.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "git_create_branch",
+                "description": "Create and switch to a git branch.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"name": {"type": "string"}},
+                    "required": ["name"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "git_commit",
+                "description": "Stage selected files and create a git commit.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "message": {"type": "string"},
+                        "files": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Files to stage. Defaults to all changed files.",
+                        },
+                    },
+                    "required": ["message"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "git_create_pr",
+                "description": "Push the current branch and create a GitHub pull request using gh.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string"},
+                        "body": {"type": "string"},
+                        "base": {"type": "string", "description": "Base branch. Defaults to repository default."},
+                        "draft": {"type": "boolean", "description": "Create a draft PR. Defaults to true."},
+                    },
+                    "required": ["title", "body"],
+                },
+            },
+        },
     ]
 
 
@@ -130,10 +200,14 @@ class ToolExecutor:
         *,
         auto_approve: bool = False,
         ask: Callable[[str], bool] | None = None,
+        approve_diff: Callable[[str, str], bool] | None = None,
+        policy: PermissionConfig | None = None,
     ) -> None:
         self.cwd = cwd.resolve()
-        self.auto_approve = auto_approve
+        self.policy = policy or PermissionConfig(approval="auto" if auto_approve else "ask")
+        self.auto_approve = auto_approve or self.policy.auto_approve
         self.ask = ask or self._default_ask
+        self.approve_diff = approve_diff
 
     def run(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         tools: dict[str, Callable[[dict[str, Any]], ToolResult]] = {
@@ -142,6 +216,10 @@ class ToolExecutor:
             "write_file": self._write_file,
             "replace_in_file": self._replace_in_file,
             "list_dir": self._list_dir,
+            "git_status": self._git_status,
+            "git_create_branch": self._git_create_branch,
+            "git_commit": self._git_commit,
+            "git_create_pr": self._git_create_pr,
         }
         if name not in tools:
             return ToolResult(False, f"Unknown tool: {name}")
@@ -160,9 +238,26 @@ class ToolExecutor:
         if not self.ask(prompt):
             raise ToolError("User rejected tool execution.")
 
+    def _confirm_diff(self, prompt: str, diff: str) -> None:
+        if self.auto_approve:
+            return
+        if self.approve_diff:
+            approved = self.approve_diff(prompt, diff)
+        else:
+            print(diff)
+            approved = self.ask(prompt)
+        if not approved:
+            raise ToolError("User rejected file change.")
+
+    def _resolve_checked_path(self, user_path: str) -> Path:
+        path = _resolve_workspace_path(self.cwd, user_path)
+        self.policy.check_path(self.cwd, path)
+        return path
+
     def _shell(self, arguments: dict[str, Any]) -> ToolResult:
         command = str(arguments["command"])
         timeout = int(arguments.get("timeout_seconds") or 60)
+        self.policy.check_shell()
         self._confirm(f"Run shell command: {command}")
         if platform.system() == "Windows":
             completed = subprocess.run(
@@ -190,7 +285,7 @@ class ToolExecutor:
         return ToolResult(completed.returncode == 0, output.strip())
 
     def _read_file(self, arguments: dict[str, Any]) -> ToolResult:
-        path = _resolve_workspace_path(self.cwd, str(arguments["path"]))
+        path = self._resolve_checked_path(str(arguments["path"]))
         max_chars = int(arguments.get("max_chars") or 20000)
         content = path.read_text(encoding="utf-8", errors="replace")
         if len(content) > max_chars:
@@ -198,32 +293,36 @@ class ToolExecutor:
         return ToolResult(True, content)
 
     def _write_file(self, arguments: dict[str, Any]) -> ToolResult:
-        path = _resolve_workspace_path(self.cwd, str(arguments["path"]))
+        self.policy.check_write()
+        path = self._resolve_checked_path(str(arguments["path"]))
         content = str(arguments["content"])
-        self._confirm(f"Write file: {path}")
+        old = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+        diff = _unified_diff(path, old, content)
+        self._confirm_diff(f"Apply write to file: {path}", diff or f"Create empty file: {path}")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8", newline="")
         return ToolResult(True, f"Wrote {path} ({len(content)} chars).")
 
     def _replace_in_file(self, arguments: dict[str, Any]) -> ToolResult:
-        path = _resolve_workspace_path(self.cwd, str(arguments["path"]))
+        self.policy.check_write()
+        path = self._resolve_checked_path(str(arguments["path"]))
         old = str(arguments["old"])
         new = str(arguments["new"])
         count = arguments.get("count")
         content = path.read_text(encoding="utf-8")
         if old not in content:
             raise ToolError(f"Text not found in {path}.")
-        self._confirm(f"Replace text in file: {path}")
         if count is None:
             updated = content.replace(old, new)
         else:
             updated = content.replace(old, new, int(count))
+        self._confirm_diff(f"Apply replacement in file: {path}", _unified_diff(path, content, updated))
         path.write_text(updated, encoding="utf-8", newline="")
         replacements = content.count(old) if count is None else min(content.count(old), int(count))
         return ToolResult(True, f"Updated {path}; replacements={replacements}.")
 
     def _list_dir(self, arguments: dict[str, Any]) -> ToolResult:
-        path = _resolve_workspace_path(self.cwd, str(arguments.get("path") or "."))
+        path = self._resolve_checked_path(str(arguments.get("path") or "."))
         rows: list[str] = []
         for entry in sorted(path.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower())):
             kind = "dir " if entry.is_dir() else "file"
@@ -233,3 +332,80 @@ class ToolExecutor:
                 size = ""
             rows.append(f"{kind} {os.path.relpath(entry, self.cwd)}{size}")
         return ToolResult(True, "\n".join(rows) if rows else "(empty)")
+
+    def _run_git(self, args: list[str], *, timeout: int = 120) -> ToolResult:
+        completed = subprocess.run(
+            ["git", *args],
+            cwd=self.cwd,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+        )
+        output = completed.stdout
+        if completed.stderr:
+            output += ("\n" if output else "") + completed.stderr
+        output += f"\n[exit_code={completed.returncode}]"
+        return ToolResult(completed.returncode == 0, output.strip())
+
+    def _git_status(self, arguments: dict[str, Any]) -> ToolResult:
+        _ = arguments
+        branch = self._run_git(["branch", "--show-current"])
+        status = self._run_git(["status", "--short", "--branch"])
+        return ToolResult(branch.ok and status.ok, f"branch={branch.output}\n{status.output}")
+
+    def _git_create_branch(self, arguments: dict[str, Any]) -> ToolResult:
+        self.policy.check_write()
+        name = str(arguments["name"])
+        self._confirm(f"Create and switch to git branch: {name}")
+        return self._run_git(["switch", "-c", name])
+
+    def _git_commit(self, arguments: dict[str, Any]) -> ToolResult:
+        self.policy.check_write()
+        message = str(arguments["message"])
+        files = [str(item) for item in arguments.get("files") or []]
+        self._confirm(f"Stage files and commit: {message}")
+        if files:
+            for file in files:
+                path = self._resolve_checked_path(file)
+                result = self._run_git(["add", os.path.relpath(path, self.cwd)])
+                if not result.ok:
+                    return result
+        else:
+            result = self._run_git(["add", "-A"])
+            if not result.ok:
+                return result
+        return self._run_git(["commit", "-m", message])
+
+    def _git_create_pr(self, arguments: dict[str, Any]) -> ToolResult:
+        self.policy.check_shell()
+        title = str(arguments["title"])
+        body = str(arguments["body"])
+        base = arguments.get("base")
+        draft = bool(arguments.get("draft", True))
+        self._confirm(f"Push current branch and create GitHub PR: {title}")
+        branch = self._run_git(["branch", "--show-current"])
+        if not branch.ok:
+            return branch
+        branch_name = branch.output.splitlines()[0].removeprefix("branch=").strip()
+        push = self._run_git(["push", "-u", "origin", branch_name], timeout=300)
+        if not push.ok:
+            return push
+        command = ["gh", "pr", "create", "--title", title, "--body", body]
+        if draft:
+            command.append("--draft")
+        if base:
+            command.extend(["--base", str(base)])
+        completed = subprocess.run(
+            command,
+            cwd=self.cwd,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=120,
+        )
+        output = completed.stdout
+        if completed.stderr:
+            output += ("\n" if output else "") + completed.stderr
+        output += f"\n[exit_code={completed.returncode}]"
+        return ToolResult(completed.returncode == 0, output.strip())
