@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "deepseek-codex-cli"
-version = "0.2.0"
+version = "0.3.0"
 description = "A Codex-style command line coding agent powered by DeepSeek."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -25,6 +25,7 @@ classifiers = [
   "Topic :: Software Development",
 ]
 dependencies = [
+  "prompt-toolkit>=3.0.43",
   "rich>=13.7",
 ]
 
