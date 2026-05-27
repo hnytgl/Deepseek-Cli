@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .policy import PermissionConfig
+from .tool_installer import resolve_install_plan
 
 
 class ToolError(RuntimeError):
@@ -175,17 +176,20 @@ def tool_definitions() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "install_tool",
-                "description": "Install a missing local tool with an approved package manager.",
+                "description": "Install a missing local tool. Automatically chooses an OS-appropriate package manager unless manager/package are provided.",
                 "parameters": {
                     "type": "object",
                     "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Logical tool name, such as ripgrep, jq, git, gh, node.",
+                        },
                         "manager": {
                             "type": "string",
-                            "description": "One of pip, npm, winget, scoop, choco, brew, apt.",
+                            "description": "Optional override: pip, npm, winget, scoop, choco, brew, apt, dnf, pacman, zypper.",
                         },
-                        "package": {"type": "string"},
+                        "package": {"type": "string", "description": "Optional manager-specific package id."},
                     },
-                    "required": ["manager", "package"],
                 },
             },
         },
@@ -444,22 +448,13 @@ class ToolExecutor:
 
     def _install_tool(self, arguments: dict[str, Any]) -> ToolResult:
         self.policy.check_install_tools()
-        manager = str(arguments["manager"]).lower()
-        package = str(arguments["package"])
-        commands = {
-            "pip": ["python", "-m", "pip", "install", package],
-            "npm": ["npm", "install", "-g", package],
-            "winget": ["winget", "install", "--id", package, "--accept-package-agreements", "--accept-source-agreements"],
-            "scoop": ["scoop", "install", package],
-            "choco": ["choco", "install", package, "-y"],
-            "brew": ["brew", "install", package],
-            "apt": ["sudo", "apt-get", "install", "-y", package],
-        }
-        if manager not in commands:
-            raise ToolError(f"Unsupported package manager: {manager}")
-        self._confirm(f"Install tool with {manager}: {package}")
+        name = str(arguments.get("name") or "") or None
+        manager = str(arguments.get("manager") or "") or None
+        package = str(arguments.get("package") or "") or None
+        plan = resolve_install_plan(tool_name=name, manager=manager, package=package)
+        self._confirm(f"Install tool with {plan.manager}: {plan.package}\n{plan.display()}")
         completed = subprocess.run(
-            commands[manager],
+            plan.command,
             cwd=self.cwd,
             text=True,
             stdout=subprocess.PIPE,
