@@ -11,6 +11,7 @@ from .policy import PermissionConfig
 from .session import SessionStore
 from .tools import ToolExecutor
 from .ui import RichAgentEvents, RichDiffConfirmer, RichToolConfirmer, run_rich_interactive
+from .updater import run_doctor, self_update
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -37,12 +38,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Restrict file tools to the workspace by default.",
     )
     parser.add_argument("--no-shell", action="store_true", help="Disable shell and PR tools.")
+    parser.add_argument("--allow-command", action="append", default=[], help="Allow only this shell command. Repeatable.")
+    parser.add_argument("--deny-command", action="append", default=[], help="Block this shell command. Repeatable.")
     parser.add_argument("--session", default=None, help="Save and resume a named session.")
     parser.add_argument("--resume", action="store_true", help="Resume the latest or named session.")
     parser.add_argument("--no-stream", action="store_true", help="Disable streaming API responses.")
     parser.add_argument("--max-steps", type=int, default=24, help="Maximum model/tool loop steps.")
     parser.add_argument("--temperature", type=float, default=0.2, help="Sampling temperature.")
     parser.add_argument("--plain", action="store_true", help="Use plain input/output instead of the Rich TUI.")
+    parser.add_argument("--doctor", action="store_true", help="Check local installation requirements.")
+    parser.add_argument(
+        "--self-update",
+        nargs="?",
+        const="git+https://github.com/hnytgl/deepseek-cli.git",
+        metavar="SOURCE",
+        help="Upgrade this CLI with pip. Defaults to the GitHub repository.",
+    )
     parser.add_argument("--version", action="version", version=f"deepseek-codex-cli {__version__}")
     return parser
 
@@ -60,7 +71,13 @@ def create_agent(args: argparse.Namespace) -> DeepSeekAgent:
         model=args.model,
     )
     approval = "auto" if args.yes else args.approval
-    policy = PermissionConfig(approval=approval, sandbox=args.sandbox, shell=not args.no_shell)
+    policy = PermissionConfig(
+        approval=approval,
+        sandbox=args.sandbox,
+        shell=not args.no_shell,
+        allow_commands=tuple(command.lower() for command in args.allow_command),
+        deny_commands=tuple(command.lower() for command in args.deny_command),
+    )
     tools = ToolExecutor(
         cwd,
         auto_approve=args.yes,
@@ -113,6 +130,12 @@ def save_session(agent: DeepSeekAgent, session_name: str | None) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.doctor:
+        report = run_doctor()
+        print(report.output)
+        return 0 if report.ok else 1
+    if args.self_update:
+        return self_update(args.self_update)
     try:
         agent = create_agent(args)
     except DeepSeekAPIError as exc:
