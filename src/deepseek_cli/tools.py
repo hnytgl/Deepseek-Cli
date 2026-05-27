@@ -137,6 +137,38 @@ def tool_definitions() -> list[dict[str, Any]]:
         {
             "type": "function",
             "function": {
+                "name": "apply_file_edits",
+                "description": "Apply multi-file full-content edits after a combined diff review.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "files": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "path": {"type": "string"},
+                                    "content": {"type": "string"},
+                                },
+                                "required": ["path", "content"],
+                            },
+                        }
+                    },
+                    "required": ["files"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "git_diff",
+                "description": "Show the current multi-file git diff for review.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "git_status",
                 "description": "Show git branch and working tree status.",
                 "parameters": {"type": "object", "properties": {}},
@@ -216,6 +248,8 @@ class ToolExecutor:
             "write_file": self._write_file,
             "replace_in_file": self._replace_in_file,
             "list_dir": self._list_dir,
+            "apply_file_edits": self._apply_file_edits,
+            "git_diff": self._git_diff,
             "git_status": self._git_status,
             "git_create_branch": self._git_create_branch,
             "git_commit": self._git_commit,
@@ -257,7 +291,7 @@ class ToolExecutor:
     def _shell(self, arguments: dict[str, Any]) -> ToolResult:
         command = str(arguments["command"])
         timeout = int(arguments.get("timeout_seconds") or 60)
-        self.policy.check_shell()
+        self.policy.check_command(command)
         self._confirm(f"Run shell command: {command}")
         if platform.system() == "Windows":
             completed = subprocess.run(
@@ -333,6 +367,25 @@ class ToolExecutor:
             rows.append(f"{kind} {os.path.relpath(entry, self.cwd)}{size}")
         return ToolResult(True, "\n".join(rows) if rows else "(empty)")
 
+    def _apply_file_edits(self, arguments: dict[str, Any]) -> ToolResult:
+        self.policy.check_write()
+        files = arguments.get("files") or []
+        planned: list[tuple[Path, str, str]] = []
+        combined_diff = ""
+        for item in files:
+            path = self._resolve_checked_path(str(item["path"]))
+            content = str(item["content"])
+            old = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+            combined_diff += _unified_diff(path, old, content) or f"Create empty file: {path}\n"
+            planned.append((path, old, content))
+        if not planned:
+            raise ToolError("No file edits were provided.")
+        self._confirm_diff(f"Apply {len(planned)} file edit(s)", combined_diff)
+        for path, _old, content in planned:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8", newline="")
+        return ToolResult(True, f"Applied {len(planned)} file edit(s).")
+
     def _run_git(self, args: list[str], *, timeout: int = 120) -> ToolResult:
         completed = subprocess.run(
             ["git", *args],
@@ -353,6 +406,10 @@ class ToolExecutor:
         branch = self._run_git(["branch", "--show-current"])
         status = self._run_git(["status", "--short", "--branch"])
         return ToolResult(branch.ok and status.ok, f"branch={branch.output}\n{status.output}")
+
+    def _git_diff(self, arguments: dict[str, Any]) -> ToolResult:
+        _ = arguments
+        return self._run_git(["diff", "--", "."])
 
     def _git_create_branch(self, arguments: dict[str, Any]) -> ToolResult:
         self.policy.check_write()
