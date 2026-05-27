@@ -190,10 +190,26 @@ def run_rich_interactive(
     model: str,
     session_name: str | None = None,
     on_turn_done: Callable[[], None] | None = None,
+    fullscreen: bool = False,
 ) -> int:
     console = Console()
     events = RichAgentEvents(console)
     agent.events = events
+    if fullscreen:
+        with console.screen(style="none"):
+            return _run_loop(console, events, agent, cwd, model, session_name, on_turn_done)
+    return _run_loop(console, events, agent, cwd, model, session_name, on_turn_done)
+
+
+def _run_loop(
+    console: Console,
+    events: RichAgentEvents,
+    agent: DeepSeekAgent,
+    cwd: Path,
+    model: str,
+    session_name: str | None,
+    on_turn_done: Callable[[], None] | None,
+) -> int:
     print_welcome(console, cwd, model, session_name)
     prompt_session = make_prompt_session()
 
@@ -248,3 +264,15 @@ class RichDiffConfirmer:
     def __call__(self, prompt: str, diff: str) -> bool:
         self.console.print(Panel(Syntax(diff, "diff", word_wrap=True), title="文件变更预览", border_style="yellow"))
         return Confirm.ask(f"[yellow]{prompt}[/yellow]", default=False, console=self.console)
+
+
+class RichFileEditConfirmer:
+    def __init__(self, console: Console | None = None) -> None:
+        self.console = console or Console()
+
+    def __call__(self, items: list[tuple[Path, str]]) -> list[bool]:
+        accepted: list[bool] = []
+        for path, diff in items:
+            self.console.print(Panel(Syntax(diff, "diff", word_wrap=True), title=f"Review {path}", border_style="yellow"))
+            accepted.append(Confirm.ask(f"[yellow]Apply this file edit? {path}[/yellow]", default=False, console=self.console))
+        return accepted
