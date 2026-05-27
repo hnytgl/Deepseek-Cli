@@ -28,6 +28,7 @@ class AgentConfig:
     cwd: Path
     max_steps: int = 24
     temperature: float = 0.2
+    stream: bool = True
 
 
 class AgentEventHandler(Protocol):
@@ -35,7 +36,11 @@ class AgentEventHandler(Protocol):
 
     def on_model_message(self, content: str) -> None: ...
 
+    def on_model_delta(self, content: str) -> None: ...
+
     def on_reasoning(self, content: str) -> None: ...
+
+    def on_reasoning_delta(self, content: str) -> None: ...
 
     def on_tool_start(self, name: str, arguments: dict[str, Any]) -> None: ...
 
@@ -66,16 +71,13 @@ class DeepSeekAgent:
         for step in range(1, self.config.max_steps + 1):
             if self.events:
                 self.events.on_step(step, self.config.max_steps)
-            response = self.client.chat(
-                {
-                    "messages": self.messages,
-                    "tools": tool_definitions(),
-                    "tool_choice": "auto",
-                    "temperature": self.config.temperature,
-                }
-            )
-            choice = response.get("choices", [{}])[0]
-            message = choice.get("message") or {}
+            payload = {
+                "messages": self.messages,
+                "tools": tool_definitions(),
+                "tool_choice": "auto",
+                "temperature": self.config.temperature,
+            }
+            message = self._stream_message(payload) if self.config.stream else self._chat_message(payload)
             self.messages.append(self._normalize_assistant_message(message))
 
             content = message.get("content") or ""
@@ -96,6 +98,53 @@ class DeepSeekAgent:
                 self.messages.append(tool_message)
 
         return "Stopped because max tool steps were reached. Please retry with a narrower request."
+
+    def _chat_message(self, payload: dict[str, Any]) -> dict[str, Any]:
+        response = self.client.chat(payload)
+        choice = response.get("choices", [{}])[0]
+        return choice.get("message") or {}
+
+    def _stream_message(self, payload: dict[str, Any]) -> dict[str, Any]:
+        content_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        tool_call_parts: dict[int, dict[str, Any]] = {}
+
+        for event in self.client.chat_stream(payload):
+            choice = event.get("choices", [{}])[0]
+            delta = choice.get("delta") or {}
+
+            content = delta.get("content") or ""
+            if content:
+                content_parts.append(content)
+                if self.events:
+                    self.events.on_model_delta(content)
+
+            reasoning = delta.get("reasoning_content") or ""
+            if reasoning:
+                reasoning_parts.append(reasoning)
+                if self.events:
+                    self.events.on_reasoning_delta(reasoning)
+
+            for tool_call in delta.get("tool_calls") or []:
+                index = int(tool_call.get("index", 0))
+                current = tool_call_parts.setdefault(
+                    index,
+                    {"id": tool_call.get("id"), "type": "function", "function": {"name": "", "arguments": ""}},
+                )
+                if tool_call.get("id"):
+                    current["id"] = tool_call["id"]
+                function = tool_call.get("function") or {}
+                if function.get("name"):
+                    current["function"]["name"] += function["name"]
+                if function.get("arguments"):
+                    current["function"]["arguments"] += function["arguments"]
+
+        message: dict[str, Any] = {"role": "assistant", "content": "".join(content_parts) or None}
+        if reasoning_parts:
+            message["reasoning_content"] = "".join(reasoning_parts)
+        if tool_call_parts:
+            message["tool_calls"] = [tool_call_parts[index] for index in sorted(tool_call_parts)]
+        return message
 
     def _normalize_assistant_message(self, message: dict[str, Any]) -> dict[str, Any]:
         normalized: dict[str, Any] = {"role": "assistant"}
