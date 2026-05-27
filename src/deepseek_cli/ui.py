@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from prompt_toolkit import PromptSession
+from prompt_toolkit.history import FileHistory
+from prompt_toolkit.key_binding import KeyBindings
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -15,6 +19,7 @@ from rich.table import Table
 from rich.text import Text
 
 from .agent import AgentEventHandler, DeepSeekAgent
+from .session import default_session_dir
 
 
 def _trim(text: str, limit: int = 5000) -> str:
@@ -124,7 +129,10 @@ def print_help(console: Console) -> None:
         Panel(
             "/exit 或 /quit：退出\n"
             "/clear：清空当前对话上下文\n"
+            "/logs：用可滚动 pager 查看本轮日志\n"
+            "/review：查看当前 Git 多文件 diff\n"
             "/help：显示帮助\n\n"
+            "快捷键：Ctrl+D 退出，Ctrl+L 清屏，方向键浏览历史。\n\n"
             "直接输入任务即可，例如：\n"
             "  帮我阅读这个项目并修复测试\n"
             "  创建分支，完成修改，提交并打开 PR",
@@ -132,6 +140,47 @@ def print_help(console: Console) -> None:
             border_style="cyan",
         )
     )
+
+
+def make_prompt_session() -> PromptSession[str]:
+    history_path = default_session_dir().parent / "prompt_history.txt"
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    bindings = KeyBindings()
+
+    @bindings.add("c-l")
+    def _(event) -> None:
+        event.app.renderer.clear()
+
+    @bindings.add("c-d")
+    def _(event) -> None:
+        event.app.exit(exception=EOFError)
+
+    return PromptSession(history=FileHistory(str(history_path)), key_bindings=bindings)
+
+
+def show_logs(console: Console, events: RichAgentEvents) -> None:
+    with console.pager(styles=True):
+        console.print(render_header(events.step, events.max_steps, events.current_status))
+        if events.streaming_reasoning:
+            console.print(Panel(events.streaming_reasoning, title="思考", border_style="magenta"))
+        if events.streaming_answer:
+            console.print(Panel(Markdown(events.streaming_answer), title="回复草稿", border_style="green"))
+        for title, body in events.logs:
+            console.print(Panel(body, title=title))
+
+
+def show_git_review(console: Console, cwd: Path) -> None:
+    completed = subprocess.run(
+        ["git", "diff", "--", "."],
+        cwd=cwd,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=60,
+    )
+    diff = completed.stdout or completed.stderr or "当前没有 Git diff。"
+    with console.pager(styles=True):
+        console.print(Panel(Syntax(diff, "diff", word_wrap=True), title="多文件 Review", border_style="yellow"))
 
 
 def run_rich_interactive(
@@ -146,10 +195,11 @@ def run_rich_interactive(
     events = RichAgentEvents(console)
     agent.events = events
     print_welcome(console, cwd, model, session_name)
+    prompt_session = make_prompt_session()
 
     while True:
         try:
-            prompt = Prompt.ask("\n[bold cyan]深问[/bold cyan]").strip()
+            prompt = prompt_session.prompt("\n深问> ").strip()
         except (EOFError, KeyboardInterrupt):
             console.print()
             return 0
@@ -160,6 +210,12 @@ def run_rich_interactive(
             return 0
         if prompt == "/help":
             print_help(console)
+            continue
+        if prompt == "/logs":
+            show_logs(console, events)
+            continue
+        if prompt == "/review":
+            show_git_review(console, cwd)
             continue
         if prompt == "/clear":
             agent.messages.clear()
