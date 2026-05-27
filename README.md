@@ -16,6 +16,10 @@
 - 默认工作区沙箱，防止文件工具越权读写工作区之外的路径。
 - 命令白名单/黑名单，支持更细粒度的 shell 权限控制。
 - 输入历史、Ctrl+D 退出、Ctrl+L 清屏、可滚动日志和多文件 review 视图。
+- 全屏 alternate-screen TUI，可在支持的终端中配合 pager/鼠标滚动查看日志。
+- 按项目保存权限策略，团队项目可以复用同一套安全配置。
+- 补丁支持按文件逐个接受或拒绝，减少“一次全收/全拒”的风险。
+- 可以在明确授权后按需检测和安装本机缺失工具。
 - 跨平台安装脚本、`--doctor` 环境检查和 `--self-update` 自更新。
 - 默认在执行 shell、写文件、Git 提交或 PR 前询问确认；可用 `--yes` 开启全自动模式。
 - 支持单次任务模式，也支持进入交互式会话。
@@ -79,6 +83,12 @@ deepseek --model deepseek-reasoner "分析这个项目的架构并给出改进�
 deepseek --plain
 ```
 
+使用全屏终端界面：
+
+```powershell
+deepseek --fullscreen
+```
+
 保存并恢复会话：
 
 ```powershell
@@ -109,6 +119,18 @@ deepseek --allow-command python --allow-command git
 
 ```powershell
 deepseek --deny-command rm --deny-command del --deny-command powershell
+```
+
+允许 DeepSeek 在需要时安装本机工具：
+
+```powershell
+deepseek --allow-install-tools "如果缺少测试工具，请先安装再运行测试"
+```
+
+保存当前项目权限策略：
+
+```powershell
+deepseek --approval ask --sandbox workspace --deny-command rm --save-policy --show-policy
 ```
 
 允许访问工作区之外的路径：
@@ -149,6 +171,8 @@ DeepSeek 可以自动调用这些本地工具：
 - `replace_in_file`：在文件中替换精确文本。
 - `list_dir`：列出目录内容。
 - `apply_file_edits`：一次性提交多文件完整内容编辑，并显示合并 diff 审批。
+- `check_tool`：检查本机是否存在某个可执行工具。
+- `install_tool`：在明确允许后使用 `pip`、`npm`、`winget`、`scoop`、`choco`、`brew` 或 `apt` 安装缺失工具。
 - `git_diff`：显示当前多文件 Git diff，供 review。
 - `git_status`：查看当前 Git 分支和工作树状态。
 - `git_create_branch`：创建并切换到新分支。
@@ -175,12 +199,23 @@ Shell 控制：
 - `--no-shell`：禁用 shell 和依赖 shell 的 PR 工具。
 - `--allow-command name`：只允许指定 shell 命令，可重复传入。
 - `--deny-command name`：阻止指定 shell 命令，可重复传入。
+- `--allow-install-tools`：允许 `install_tool` 安装缺失工具。
+- `--save-policy`：把当前有效权限策略保存到项目。
+- `--show-policy`：打印当前有效权限策略。
 
 白名单优先约束可执行命令集合，黑名单用于拦截明确不希望模型执行的命令。命令名按可执行文件名识别，例如 `python -m pytest` 的命令名是 `python`。
 
+项目策略保存位置：
+
+```text
+.deepseek-cli/policy.json
+```
+
+再次在该项目运行 `deepseek` 时会自动加载这个策略。命令行参数会覆盖项目策略。
+
 ## 补丁编辑和多文件 Review
 
-DeepSeek 可以使用 `apply_file_edits` 一次提交多文件修改。CLI 会先把所有文件的 unified diff 合并展示出来，确认后才会真正写入。你也可以随时在交互模式中输入：
+DeepSeek 可以使用 `apply_file_edits` 一次提交多文件修改。CLI 会逐个展示每个文件的 unified diff，你可以按文件接受或拒绝，确认后才会真正写入。你也可以随时在交互模式中输入：
 
 ```text
 /review
@@ -269,11 +304,22 @@ deepseek --self-update
 deepseek --self-update "git+https://github.com/hnytgl/deepseek-cli.git"
 ```
 
+## 发布到生态
+
+仓库已包含发布准备文件：
+
+- PyPI：`.github/workflows/publish.yml`，使用 PyPI Trusted Publishing。
+- Homebrew：`packaging/homebrew/deepseek-codex-cli.rb`。
+- Scoop：`packaging/scoop/deepseek-codex-cli.json`。
+- winget：`packaging/winget/*.yaml`。
+
+真正发布到这些生态需要对应账号、release 产物和 SHA256 校验值。当前模板中带有 `REPLACE_WITH_*_SHA256` 占位符，发布 release 后替换即可提交到对应 registry。
+
 ## 和 Codex CLI 看齐的方向
 
-这个项目当前已经具备 Codex CLI 风格的基础能力：终端 TUI、多轮对话、流式输出、自动工具调用、本地文件编辑、命令执行、diff 审批、Git/PR 工作流、会话恢复、权限沙箱、可滚动日志、多文件 review、命令 allow/deny 策略和跨平台安装检查。后续可以继续增强：
+这个项目当前已经具备 Codex CLI 风格的基础能力：终端 TUI、多轮对话、流式输出、自动工具调用、本地文件编辑、命令执行、diff 审批、Git/PR 工作流、会话恢复、权限沙箱、可滚动日志、多文件 review、命令 allow/deny 策略、项目策略、按需安装工具和跨平台安装检查。后续可以继续增强：
 
-- 更完整的全屏 TUI 布局和鼠标滚动。
-- 发布到 PyPI、Homebrew、Scoop、winget。
-- 按项目保存权限策略。
-- 更强的补丁局部接受/拒绝能力。
+- 真正的 split-pane 全屏 TUI 和鼠标滚动事件处理。
+- hunk 级别补丁接受/拒绝。
+- 构建 Windows/macOS/Linux 单文件二进制。
+- 自动生成并校验 Homebrew/Scoop/winget SHA256。
