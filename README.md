@@ -14,6 +14,9 @@
 - Git 状态感知、自动创建分支、提交、推送并创建 GitHub PR。
 - 会话持久化和历史恢复，支持按名称保存上下文。
 - 默认工作区沙箱，防止文件工具越权读写工作区之外的路径。
+- 命令白名单/黑名单，支持更细粒度的 shell 权限控制。
+- 输入历史、Ctrl+D 退出、Ctrl+L 清屏、可滚动日志和多文件 review 视图。
+- 跨平台安装脚本、`--doctor` 环境检查和 `--self-update` 自更新。
 - 默认在执行 shell、写文件、Git 提交或 PR 前询问确认；可用 `--yes` 开启全自动模式。
 - 支持单次任务模式，也支持进入交互式会话。
 - 使用 Python 标准库完成 API 请求，运行时只依赖 `rich` 负责终端界面。
@@ -96,6 +99,18 @@ deepseek --approval read-only "检查这个仓库的问题，不要修改文件"
 deepseek --no-shell "只阅读文件并给出建议"
 ```
 
+只允许指定命令：
+
+```powershell
+deepseek --allow-command python --allow-command git
+```
+
+阻止高风险命令：
+
+```powershell
+deepseek --deny-command rm --deny-command del --deny-command powershell
+```
+
 允许访问工作区之外的路径：
 
 ```powershell
@@ -108,7 +123,15 @@ deepseek --sandbox unrestricted
 
 - `/help`：显示帮助。
 - `/clear`：清空当前对话上下文。
+- `/logs`：打开可滚动日志视图。
+- `/review`：打开当前 Git 多文件 diff review 视图。
 - `/exit` 或 `/quit`：退出。
+
+快捷键：
+
+- `Ctrl+D`：退出。
+- `Ctrl+L`：清屏。
+- `↑` / `↓`：浏览输入历史。
 
 直接输入自然语言任务即可，例如：
 
@@ -125,6 +148,8 @@ DeepSeek 可以自动调用这些本地工具：
 - `write_file`：写入 UTF-8 文本文件，并自动创建父目录。
 - `replace_in_file`：在文件中替换精确文本。
 - `list_dir`：列出目录内容。
+- `apply_file_edits`：一次性提交多文件完整内容编辑，并显示合并 diff 审批。
+- `git_diff`：显示当前多文件 Git diff，供 review。
 - `git_status`：查看当前 Git 分支和工作树状态。
 - `git_create_branch`：创建并切换到新分支。
 - `git_commit`：暂存指定文件并提交。
@@ -148,6 +173,26 @@ DeepSeek 可以自动调用这些本地工具：
 Shell 控制：
 
 - `--no-shell`：禁用 shell 和依赖 shell 的 PR 工具。
+- `--allow-command name`：只允许指定 shell 命令，可重复传入。
+- `--deny-command name`：阻止指定 shell 命令，可重复传入。
+
+白名单优先约束可执行命令集合，黑名单用于拦截明确不希望模型执行的命令。命令名按可执行文件名识别，例如 `python -m pytest` 的命令名是 `python`。
+
+## 补丁编辑和多文件 Review
+
+DeepSeek 可以使用 `apply_file_edits` 一次提交多文件修改。CLI 会先把所有文件的 unified diff 合并展示出来，确认后才会真正写入。你也可以随时在交互模式中输入：
+
+```text
+/review
+```
+
+来查看当前工作区的多文件 Git diff；输入：
+
+```text
+/logs
+```
+
+可以打开可滚动的任务日志视图。
 
 ## Git 和 PR 工作流
 
@@ -195,13 +240,40 @@ python -m compileall src tests
 python -m pytest
 deepseek --help
 deepseek --version
+deepseek --doctor
+```
+
+## 安装和更新
+
+Windows PowerShell：
+
+```powershell
+.\scripts\install.ps1
+```
+
+macOS / Linux：
+
+```bash
+sh scripts/install.sh
+```
+
+自更新：
+
+```powershell
+deepseek --self-update
+```
+
+也可以指定来源：
+
+```powershell
+deepseek --self-update "git+https://github.com/hnytgl/deepseek-cli.git"
 ```
 
 ## 和 Codex CLI 看齐的方向
 
-这个项目当前已经具备 Codex CLI 风格的基础能力：终端 TUI、多轮对话、流式输出、自动工具调用、本地文件编辑、命令执行、diff 审批、Git/PR 工作流、会话恢复和权限沙箱。后续可以继续增强：
+这个项目当前已经具备 Codex CLI 风格的基础能力：终端 TUI、多轮对话、流式输出、自动工具调用、本地文件编辑、命令执行、diff 审批、Git/PR 工作流、会话恢复、权限沙箱、可滚动日志、多文件 review、命令 allow/deny 策略和跨平台安装检查。后续可以继续增强：
 
-- 更完整的终端快捷键和可滚动日志视图。
-- 更细粒度的命令白名单/黑名单。
-- 更接近 Codex CLI 的补丁编辑器和多文件 review 界面。
-- 更强的跨平台安装包和自动更新能力。
+- 更完整的全屏 TUI 布局和鼠标滚动。
+- 发布到 PyPI、Homebrew、Scoop、winget。
+- 按项目保存权限策略。
+- 更强的补丁局部接受/拒绝能力。
