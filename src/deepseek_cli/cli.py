@@ -4,10 +4,13 @@ import argparse
 import sys
 from pathlib import Path
 
+from . import __version__
 from .agent import AgentConfig, DeepSeekAgent
 from .api import DEFAULT_MODEL, DeepSeekAPIError, DeepSeekClient
+from .policy import PermissionConfig
+from .session import SessionStore
 from .tools import ToolExecutor
-from .ui import RichAgentEvents, RichToolConfirmer, run_rich_interactive
+from .ui import RichAgentEvents, RichDiffConfirmer, RichToolConfirmer, run_rich_interactive
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -21,10 +24,26 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--base-url", default=None, help="DeepSeek API base URL.")
     parser.add_argument("--api-key", default=None, help="DeepSeek API key. Prefer DEEPSEEK_API_KEY.")
     parser.add_argument("--yes", "-y", action="store_true", help="Auto-approve tool execution.")
+    parser.add_argument(
+        "--approval",
+        choices=["ask", "auto", "read-only"],
+        default="ask",
+        help="Tool approval mode. --yes is an alias for --approval auto.",
+    )
+    parser.add_argument(
+        "--sandbox",
+        choices=["workspace", "unrestricted"],
+        default="workspace",
+        help="Restrict file tools to the workspace by default.",
+    )
+    parser.add_argument("--no-shell", action="store_true", help="Disable shell and PR tools.")
+    parser.add_argument("--session", default=None, help="Save and resume a named session.")
+    parser.add_argument("--resume", action="store_true", help="Resume the latest or named session.")
+    parser.add_argument("--no-stream", action="store_true", help="Disable streaming API responses.")
     parser.add_argument("--max-steps", type=int, default=24, help="Maximum model/tool loop steps.")
     parser.add_argument("--temperature", type=float, default=0.2, help="Sampling temperature.")
     parser.add_argument("--plain", action="store_true", help="Use plain input/output instead of the Rich TUI.")
-    parser.add_argument("--version", action="version", version="deepseek-codex-cli 0.1.0")
+    parser.add_argument("--version", action="version", version=f"deepseek-codex-cli {__version__}")
     return parser
 
 
@@ -40,15 +59,27 @@ def create_agent(args: argparse.Namespace) -> DeepSeekAgent:
         base_url=args.base_url,
         model=args.model,
     )
-    tools = ToolExecutor(cwd, auto_approve=args.yes, ask=RichToolConfirmer())
+    approval = "auto" if args.yes else args.approval
+    policy = PermissionConfig(approval=approval, sandbox=args.sandbox, shell=not args.no_shell)
+    tools = ToolExecutor(
+        cwd,
+        auto_approve=args.yes,
+        ask=RichToolConfirmer(),
+        approve_diff=RichDiffConfirmer(),
+        policy=policy,
+    )
+    messages = []
+    if args.resume or args.session:
+        messages = SessionStore.default().load(args.session, latest=args.resume and not args.session)
     return DeepSeekAgent(
         client=client,
         tools=tools,
-        config=AgentConfig(cwd=cwd, max_steps=args.max_steps, temperature=args.temperature),
+        config=AgentConfig(cwd=cwd, max_steps=args.max_steps, temperature=args.temperature, stream=not args.no_stream),
+        messages=messages,
     )
 
 
-def run_interactive(agent: DeepSeekAgent) -> int:
+def run_interactive(agent: DeepSeekAgent, *, session_name: str | None = None) -> int:
     print("DeepSeek CLI. Type /exit to quit, /clear to reset the conversation.")
     while True:
         try:
@@ -68,8 +99,15 @@ def run_interactive(agent: DeepSeekAgent) -> int:
             continue
 
         answer = agent.run_turn(prompt)
+        save_session(agent, session_name)
         if answer:
             print(f"\n{answer}")
+
+
+def save_session(agent: DeepSeekAgent, session_name: str | None) -> None:
+    if not session_name:
+        return
+    SessionStore.default().save(session_name, agent.messages, cwd=agent.config.cwd, model=agent.client.model)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -88,12 +126,21 @@ def main(argv: list[str] | None = None) -> int:
             console = Console()
             agent.events = RichAgentEvents(console)
         answer = agent.run_turn(" ".join(args.prompt))
+        save_session(agent, args.session)
         if answer:
             print(f"\n{answer}")
         return 0
     if args.plain:
-        return run_interactive(agent)
-    return run_rich_interactive(agent, cwd=Path(args.cwd).expanduser().resolve(), model=agent.client.model)
+        return run_interactive(agent, session_name=args.session)
+    code = run_rich_interactive(
+        agent,
+        cwd=Path(args.cwd).expanduser().resolve(),
+        model=agent.client.model,
+        session_name=args.session,
+        on_turn_done=lambda: save_session(agent, args.session),
+    )
+    save_session(agent, args.session)
+    return code
 
 
 if __name__ == "__main__":
