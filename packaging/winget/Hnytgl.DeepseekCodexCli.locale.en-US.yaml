@@ -1,0 +1,10 @@
+PackageIdentifier: Hnytgl.DeepseekCodexCli
+PackageVersion: 0.4.0
+PackageLocale: en-US
+Publisher: hnytgl
+PackageName: DeepSeek Codex CLI
+License: MIT
+ShortDescription: Codex-style command line coding agent powered by DeepSeek.
+PackageUrl: https://github.com/hnytgl/deepseek-cli
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0
