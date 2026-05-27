@@ -19,7 +19,7 @@
 - 全屏 alternate-screen TUI，可在支持的终端中配合 pager/鼠标滚动查看日志。
 - 按项目保存权限策略，团队项目可以复用同一套安全配置。
 - 补丁支持按文件逐个接受或拒绝，减少“一次全收/全拒”的风险。
-- 可以在明确授权后按需检测和安装本机缺失工具。
+- 可以在明确授权后按需检测和安装本机缺失工具，并根据 Windows/macOS/Linux 自动选择可用包管理器。
 - 跨平台安装脚本、`--doctor` 环境检查和 `--self-update` 自更新。
 - 默认在执行 shell、写文件、Git 提交或 PR 前询问确认；可用 `--yes` 开启全自动模式。
 - 支持单次任务模式，也支持进入交互式会话。
@@ -127,6 +127,19 @@ deepseek --deny-command rm --deny-command del --deny-command powershell
 deepseek --allow-install-tools "如果缺少测试工具，请先安装再运行测试"
 ```
 
+`install_tool` 可以只传逻辑工具名，例如 `ripgrep`、`jq`、`git`、`gh`、`node`。CLI 会自动识别当前系统和可用包管理器：
+
+- Windows：优先 `winget`，再尝试 `scoop`、`choco`、`npm`、`pip`。
+- macOS：优先 `brew`，再尝试 `npm`、`pip`。
+- Linux：优先 `apt`、`dnf`、`pacman`、`zypper`，再尝试 `brew`、`npm`、`pip`。
+
+也可以手动指定：
+
+```text
+install_tool(name="ripgrep", manager="winget")
+install_tool(manager="pip", package="ruff")
+```
+
 保存当前项目权限策略：
 
 ```powershell
@@ -172,7 +185,7 @@ DeepSeek 可以自动调用这些本地工具：
 - `list_dir`：列出目录内容。
 - `apply_file_edits`：一次性提交多文件完整内容编辑，并显示合并 diff 审批。
 - `check_tool`：检查本机是否存在某个可执行工具。
-- `install_tool`：在明确允许后使用 `pip`、`npm`、`winget`、`scoop`、`choco`、`brew` 或 `apt` 安装缺失工具。
+- `install_tool`：在明确允许后安装缺失工具；默认会按操作系统自动选择 `winget`、`scoop`、`choco`、`brew`、`apt`、`dnf`、`pacman`、`zypper`、`npm` 或 `pip`。
 - `git_diff`：显示当前多文件 Git diff，供 review。
 - `git_status`：查看当前 Git 分支和工作树状态。
 - `git_create_branch`：创建并切换到新分支。
