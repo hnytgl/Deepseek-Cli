@@ -5,6 +5,7 @@ import os
 import platform
 import subprocess
 import difflib
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -138,7 +139,7 @@ def tool_definitions() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "apply_file_edits",
-                "description": "Apply multi-file full-content edits after a combined diff review.",
+                "description": "Apply multi-file full-content edits after per-file diff review.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -155,6 +156,36 @@ def tool_definitions() -> list[dict[str, Any]]:
                         }
                     },
                     "required": ["files"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "check_tool",
+                "description": "Check whether a local executable is available on PATH.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"name": {"type": "string"}},
+                    "required": ["name"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "install_tool",
+                "description": "Install a missing local tool with an approved package manager.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "manager": {
+                            "type": "string",
+                            "description": "One of pip, npm, winget, scoop, choco, brew, apt.",
+                        },
+                        "package": {"type": "string"},
+                    },
+                    "required": ["manager", "package"],
                 },
             },
         },
@@ -233,6 +264,7 @@ class ToolExecutor:
         auto_approve: bool = False,
         ask: Callable[[str], bool] | None = None,
         approve_diff: Callable[[str, str], bool] | None = None,
+        approve_file_edits: Callable[[list[tuple[Path, str]]], list[bool]] | None = None,
         policy: PermissionConfig | None = None,
     ) -> None:
         self.cwd = cwd.resolve()
@@ -240,6 +272,7 @@ class ToolExecutor:
         self.auto_approve = auto_approve or self.policy.auto_approve
         self.ask = ask or self._default_ask
         self.approve_diff = approve_diff
+        self.approve_file_edits = approve_file_edits
 
     def run(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         tools: dict[str, Callable[[dict[str, Any]], ToolResult]] = {
@@ -249,6 +282,8 @@ class ToolExecutor:
             "replace_in_file": self._replace_in_file,
             "list_dir": self._list_dir,
             "apply_file_edits": self._apply_file_edits,
+            "check_tool": self._check_tool,
+            "install_tool": self._install_tool,
             "git_diff": self._git_diff,
             "git_status": self._git_status,
             "git_create_branch": self._git_create_branch,
@@ -371,20 +406,71 @@ class ToolExecutor:
         self.policy.check_write()
         files = arguments.get("files") or []
         planned: list[tuple[Path, str, str]] = []
-        combined_diff = ""
+        review_items: list[tuple[Path, str]] = []
         for item in files:
             path = self._resolve_checked_path(str(item["path"]))
             content = str(item["content"])
             old = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
-            combined_diff += _unified_diff(path, old, content) or f"Create empty file: {path}\n"
+            diff = _unified_diff(path, old, content) or f"Create empty file: {path}\n"
+            review_items.append((path, diff))
             planned.append((path, old, content))
         if not planned:
             raise ToolError("No file edits were provided.")
-        self._confirm_diff(f"Apply {len(planned)} file edit(s)", combined_diff)
-        for path, _old, content in planned:
+        if self.auto_approve:
+            accepted = [True for _ in planned]
+        elif self.approve_file_edits:
+            accepted = self.approve_file_edits(review_items)
+        else:
+            accepted = []
+            for path, diff in review_items:
+                accepted.append(self.ask(f"Apply edit for {path}?\n{diff}"))
+        applied = 0
+        rejected = 0
+        for accept, (path, _old, content) in zip(accepted, planned):
+            if not accept:
+                rejected += 1
+                continue
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content, encoding="utf-8", newline="")
-        return ToolResult(True, f"Applied {len(planned)} file edit(s).")
+            applied += 1
+        return ToolResult(applied > 0, f"Applied {applied} file edit(s); rejected={rejected}.")
+
+    def _check_tool(self, arguments: dict[str, Any]) -> ToolResult:
+        name = str(arguments["name"])
+        executable = shutil.which(name)
+        if executable:
+            return ToolResult(True, executable)
+        return ToolResult(False, f"Tool not found on PATH: {name}")
+
+    def _install_tool(self, arguments: dict[str, Any]) -> ToolResult:
+        self.policy.check_install_tools()
+        manager = str(arguments["manager"]).lower()
+        package = str(arguments["package"])
+        commands = {
+            "pip": ["python", "-m", "pip", "install", package],
+            "npm": ["npm", "install", "-g", package],
+            "winget": ["winget", "install", "--id", package, "--accept-package-agreements", "--accept-source-agreements"],
+            "scoop": ["scoop", "install", package],
+            "choco": ["choco", "install", package, "-y"],
+            "brew": ["brew", "install", package],
+            "apt": ["sudo", "apt-get", "install", "-y", package],
+        }
+        if manager not in commands:
+            raise ToolError(f"Unsupported package manager: {manager}")
+        self._confirm(f"Install tool with {manager}: {package}")
+        completed = subprocess.run(
+            commands[manager],
+            cwd=self.cwd,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=900,
+        )
+        output = completed.stdout
+        if completed.stderr:
+            output += ("\n" if output else "") + completed.stderr
+        output += f"\n[exit_code={completed.returncode}]"
+        return ToolResult(completed.returncode == 0, output.strip())
 
     def _run_git(self, args: list[str], *, timeout: int = 120) -> ToolResult:
         completed = subprocess.run(
