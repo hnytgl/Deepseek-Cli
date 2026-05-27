@@ -83,7 +83,7 @@ def test_apply_file_edits_reviews_combined_diff(tmp_path: Path) -> None:
     diffs: list[str] = []
     executor = ToolExecutor(
         tmp_path,
-        approve_diff=lambda _prompt, diff: diffs.append(diff) or True,
+        approve_file_edits=lambda items: diffs.extend(diff for _path, diff in items) or [True for _ in items],
     )
 
     result = executor.run(
@@ -99,5 +99,35 @@ def test_apply_file_edits_reviews_combined_diff(tmp_path: Path) -> None:
     assert result.ok
     assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "A"
     assert (tmp_path / "nested" / "b.txt").read_text(encoding="utf-8") == "B"
-    assert "+A" in diffs[0]
-    assert "+B" in diffs[0]
+    assert "+A" in "\n".join(diffs)
+    assert "+B" in "\n".join(diffs)
+
+
+def test_apply_file_edits_can_reject_one_file(tmp_path: Path) -> None:
+    executor = ToolExecutor(
+        tmp_path,
+        approve_file_edits=lambda items: [path.name == "a.txt" for path, _diff in items],
+    )
+
+    result = executor.run(
+        "apply_file_edits",
+        {
+            "files": [
+                {"path": "a.txt", "content": "A"},
+                {"path": "b.txt", "content": "B"},
+            ]
+        },
+    )
+
+    assert result.ok
+    assert (tmp_path / "a.txt").exists()
+    assert not (tmp_path / "b.txt").exists()
+
+
+def test_check_tool_reports_missing(tmp_path: Path) -> None:
+    executor = ToolExecutor(tmp_path, auto_approve=True)
+
+    result = executor.run("check_tool", {"name": "definitely-not-a-real-tool-xyz"})
+
+    assert not result.ok
+    assert "Tool not found" in result.output
