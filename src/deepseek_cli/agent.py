@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from .api import DeepSeekClient
 from .tools import ToolExecutor, tool_definitions
@@ -19,6 +19,7 @@ Working rules:
 - After code changes, run the most relevant checks available.
 - Keep final answers concise and include changed files and verification.
 - Never claim a command passed unless a tool result confirms it.
+- When useful, briefly explain current progress before calling tools.
 """
 
 
@@ -29,11 +30,24 @@ class AgentConfig:
     temperature: float = 0.2
 
 
+class AgentEventHandler(Protocol):
+    def on_step(self, step: int, max_steps: int) -> None: ...
+
+    def on_model_message(self, content: str) -> None: ...
+
+    def on_reasoning(self, content: str) -> None: ...
+
+    def on_tool_start(self, name: str, arguments: dict[str, Any]) -> None: ...
+
+    def on_tool_result(self, name: str, ok: bool, output: str) -> None: ...
+
+
 @dataclass
 class DeepSeekAgent:
     client: DeepSeekClient
     tools: ToolExecutor
     config: AgentConfig
+    events: AgentEventHandler | None = None
     messages: list[dict[str, Any]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
@@ -49,7 +63,9 @@ class DeepSeekAgent:
         )
 
         final_text = ""
-        for _ in range(self.config.max_steps):
+        for step in range(1, self.config.max_steps + 1):
+            if self.events:
+                self.events.on_step(step, self.config.max_steps)
             response = self.client.chat(
                 {
                     "messages": self.messages,
@@ -63,8 +79,13 @@ class DeepSeekAgent:
             self.messages.append(self._normalize_assistant_message(message))
 
             content = message.get("content") or ""
+            reasoning = message.get("reasoning_content") or ""
+            if reasoning and self.events:
+                self.events.on_reasoning(reasoning)
             if content:
                 final_text = content
+                if self.events:
+                    self.events.on_model_message(content)
 
             tool_calls = message.get("tool_calls") or []
             if not tool_calls:
@@ -93,11 +114,17 @@ class DeepSeekAgent:
         except json.JSONDecodeError:
             arguments = {}
 
-        print(f"\n[tool] {name} {json.dumps(arguments, ensure_ascii=False)}")
+        if self.events:
+            self.events.on_tool_start(name, arguments)
+        else:
+            print(f"\n[tool] {name} {json.dumps(arguments, ensure_ascii=False)}")
         result = self.tools.run(name, arguments)
-        print(result.output[:4000])
-        if len(result.output) > 4000:
-            print("[tool output truncated in terminal]")
+        if self.events:
+            self.events.on_tool_result(name, result.ok, result.output)
+        else:
+            print(result.output[:4000])
+            if len(result.output) > 4000:
+                print("[tool output truncated in terminal]")
 
         return {
             "role": "tool",
