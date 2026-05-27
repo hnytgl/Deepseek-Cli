@@ -7,10 +7,10 @@ from pathlib import Path
 from . import __version__
 from .agent import AgentConfig, DeepSeekAgent
 from .api import DEFAULT_MODEL, DeepSeekAPIError, DeepSeekClient
-from .policy import PermissionConfig
+from .policy import PermissionConfig, load_project_policy, save_project_policy
 from .session import SessionStore
 from .tools import ToolExecutor
-from .ui import RichAgentEvents, RichDiffConfirmer, RichToolConfirmer, run_rich_interactive
+from .ui import RichAgentEvents, RichDiffConfirmer, RichFileEditConfirmer, RichToolConfirmer, run_rich_interactive
 from .updater import run_doctor, self_update
 
 
@@ -28,24 +28,28 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--approval",
         choices=["ask", "auto", "read-only"],
-        default="ask",
+        default=None,
         help="Tool approval mode. --yes is an alias for --approval auto.",
     )
     parser.add_argument(
         "--sandbox",
         choices=["workspace", "unrestricted"],
-        default="workspace",
+        default=None,
         help="Restrict file tools to the workspace by default.",
     )
     parser.add_argument("--no-shell", action="store_true", help="Disable shell and PR tools.")
+    parser.add_argument("--allow-install-tools", action="store_true", help="Allow install_tool to install missing tools.")
     parser.add_argument("--allow-command", action="append", default=[], help="Allow only this shell command. Repeatable.")
     parser.add_argument("--deny-command", action="append", default=[], help="Block this shell command. Repeatable.")
+    parser.add_argument("--save-policy", action="store_true", help="Save the effective permission policy into this project.")
+    parser.add_argument("--show-policy", action="store_true", help="Print the effective permission policy and exit.")
     parser.add_argument("--session", default=None, help="Save and resume a named session.")
     parser.add_argument("--resume", action="store_true", help="Resume the latest or named session.")
     parser.add_argument("--no-stream", action="store_true", help="Disable streaming API responses.")
     parser.add_argument("--max-steps", type=int, default=24, help="Maximum model/tool loop steps.")
     parser.add_argument("--temperature", type=float, default=0.2, help="Sampling temperature.")
     parser.add_argument("--plain", action="store_true", help="Use plain input/output instead of the Rich TUI.")
+    parser.add_argument("--fullscreen", action="store_true", help="Use an alternate full-screen terminal surface.")
     parser.add_argument("--doctor", action="store_true", help="Check local installation requirements.")
     parser.add_argument(
         "--self-update",
@@ -70,19 +74,24 @@ def create_agent(args: argparse.Namespace) -> DeepSeekAgent:
         base_url=args.base_url,
         model=args.model,
     )
-    approval = "auto" if args.yes else args.approval
+    base_policy = load_project_policy(cwd)
+    approval = "auto" if args.yes else (args.approval or base_policy.approval)
     policy = PermissionConfig(
         approval=approval,
-        sandbox=args.sandbox,
-        shell=not args.no_shell,
-        allow_commands=tuple(command.lower() for command in args.allow_command),
-        deny_commands=tuple(command.lower() for command in args.deny_command),
+        sandbox=args.sandbox or base_policy.sandbox,
+        shell=base_policy.shell and not args.no_shell,
+        allow_commands=tuple(command.lower() for command in args.allow_command) or base_policy.allow_commands,
+        deny_commands=tuple(command.lower() for command in args.deny_command) or base_policy.deny_commands,
+        install_tools=base_policy.install_tools or args.allow_install_tools,
     )
+    if args.save_policy:
+        save_project_policy(cwd, policy)
     tools = ToolExecutor(
         cwd,
         auto_approve=args.yes,
         ask=RichToolConfirmer(),
         approve_diff=RichDiffConfirmer(),
+        approve_file_edits=RichFileEditConfirmer(),
         policy=policy,
     )
     messages = []
@@ -136,6 +145,21 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if report.ok else 1
     if args.self_update:
         return self_update(args.self_update)
+    if args.show_policy:
+        cwd = Path(args.cwd).expanduser().resolve()
+        base_policy = load_project_policy(cwd)
+        policy = PermissionConfig(
+            approval="auto" if args.yes else (args.approval or base_policy.approval),
+            sandbox=args.sandbox or base_policy.sandbox,
+            shell=base_policy.shell and not args.no_shell,
+            allow_commands=tuple(command.lower() for command in args.allow_command) or base_policy.allow_commands,
+            deny_commands=tuple(command.lower() for command in args.deny_command) or base_policy.deny_commands,
+            install_tools=base_policy.install_tools or args.allow_install_tools,
+        )
+        import json
+
+        print(json.dumps(policy.to_dict(), ensure_ascii=False, indent=2))
+        return 0
     try:
         agent = create_agent(args)
     except DeepSeekAPIError as exc:
@@ -161,6 +185,7 @@ def main(argv: list[str] | None = None) -> int:
         model=agent.client.model,
         session_name=args.session,
         on_turn_done=lambda: save_session(agent, args.session),
+        fullscreen=args.fullscreen,
     )
     save_session(agent, args.session)
     return code
