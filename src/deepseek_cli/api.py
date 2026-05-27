@@ -73,3 +73,40 @@ class DeepSeekClient:
             return json.loads(data)
         except json.JSONDecodeError as exc:
             raise DeepSeekAPIError("DeepSeek API returned invalid JSON.") from exc
+
+    def chat_stream(self, payload: dict[str, Any]):
+        request_payload = {
+            "model": self.model,
+            "stream": True,
+            **payload,
+        }
+        body = json.dumps(request_payload).encode("utf-8")
+        request = urllib.request.Request(
+            f"{self.base_url}/chat/completions",
+            data=body,
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+                "Accept": "text/event-stream",
+            },
+        )
+
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                for raw_line in response:
+                    line = raw_line.decode("utf-8", errors="replace").strip()
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data = line.removeprefix("data:").strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        yield json.loads(data)
+                    except json.JSONDecodeError as exc:
+                        raise DeepSeekAPIError("DeepSeek API stream returned invalid JSON.") from exc
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise DeepSeekAPIError(f"DeepSeek API HTTP {exc.code}: {detail}") from exc
+        except urllib.error.URLError as exc:
+            raise DeepSeekAPIError(f"DeepSeek API request failed: {exc.reason}") from exc
