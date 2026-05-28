@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
-import tempfile
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -36,9 +34,30 @@ def _trim(text: str, limit: int = 5000) -> str:
 
 
 def summarize_tool_output(name: str, ok: bool, output: str) -> str:
-    lines = output.splitlines()
-    first = lines[0] if lines else "(no output)"
-    return f"{first}\n{len(output)} chars captured. Use /logs, /expand, or F4 to open full output."
+    formatted = format_tool_output(name, output, compact=True)
+    return f"{formatted}\n\n{len(output)} chars captured. Use /logs, /expand, or F4 to open full output."
+
+
+def format_tool_output(name: str, output: str, *, compact: bool) -> str:
+    limit = 1200 if compact else 8000
+    if name == "read_file":
+        try:
+            payload = json.loads(output)
+        except json.JSONDecodeError:
+            return _trim(output, limit)
+        content = str(payload.get("content") or "")
+        header = (
+            f"file: {payload.get('path')}\n"
+            f"range: {payload.get('offset')}..{payload.get('end_offset')} / {payload.get('total_chars')}"
+        )
+        if payload.get("has_more"):
+            header += f"\nnext: read_file offset={payload.get('next_offset')} limit={payload.get('limit')}"
+        return f"{header}\n\n--- content ---\n{_trim(content, limit)}"
+    if name in {"git_diff", "git_status"}:
+        return _trim(output, 3000 if compact else limit)
+    if name == "shell":
+        return _trim(output, limit)
+    return _trim(output, limit)
 
 
 @dataclass
@@ -312,19 +331,48 @@ class RichHunkConfirmer:
 
 
 def edit_hunk_text(hunk: PatchHunk) -> str:
-    editor = os.environ.get("EDITOR") or ("notepad" if os.name == "nt" else "vi")
-    suffix = hunk.path.suffix or ".txt"
-    with tempfile.NamedTemporaryFile("w+", suffix=suffix, delete=False, encoding="utf-8") as handle:
-        temp_path = Path(handle.name)
-        handle.write(hunk.new_text)
+    console = Console()
+    old_lines = hunk.old_text.splitlines()
+    new_lines = hunk.new_text.splitlines()
+    table = Table(title=f"Line edit: {hunk.path}", show_lines=True)
+    table.add_column("#", style="bold")
+    table.add_column("old", style="red")
+    table.add_column("new", style="green")
+    width = max(len(old_lines), len(new_lines))
+    for index in range(width):
+        old = old_lines[index] if index < len(old_lines) else ""
+        new = new_lines[index] if index < len(new_lines) else ""
+        table.add_row(str(index + 1), old, new)
+    console.print(table)
+    choice = Prompt.ask(
+        "Keep which new lines? Use all, none, comma numbers, or text",
+        default="all",
+        console=console,
+    ).strip()
+    if choice == "all":
+        return hunk.new_text
+    if choice == "none":
+        return hunk.old_text
+    if choice == "text":
+        console.print("Enter replacement lines. Submit a single '.' line to finish.")
+        lines: list[str] = []
+        while True:
+            line = Prompt.ask("", console=console)
+            if line == ".":
+                break
+            lines.append(line)
+        return "\n".join(lines) + ("\n" if hunk.new_text.endswith("\n") else "")
+    selected: list[str] = []
     try:
-        subprocess.run([editor, str(temp_path)], check=False)
-        return temp_path.read_text(encoding="utf-8")
-    finally:
-        try:
-            temp_path.unlink()
-        except OSError:
-            pass
+        numbers = {int(part.strip()) for part in choice.split(",") if part.strip()}
+    except ValueError:
+        console.print("[red]Invalid line list; keeping old hunk.[/red]")
+        return hunk.old_text
+    for index, line in enumerate(new_lines, start=1):
+        if index in numbers:
+            selected.append(line)
+    suffix = "\n" if hunk.new_text.endswith("\n") and selected else ""
+    return "\n".join(selected) + suffix
 
 
 @dataclass
@@ -334,17 +382,19 @@ class SplitPaneAgentEvents(AgentEventHandler):
     logs: TextArea | None = None
     answer: TextArea | None = None
     reasoning: TextArea | None = None
+    activity: TextArea | None = None
     step: int = 0
     max_steps: int = 0
     compact: bool = True
     full_logs: list[str] = field(default_factory=list)
 
-    def bind(self, app: Application, status: TextArea, logs: TextArea, answer: TextArea, reasoning: TextArea) -> None:
+    def bind(self, app: Application, status: TextArea, logs: TextArea, answer: TextArea, reasoning: TextArea, activity: TextArea) -> None:
         self.app = app
         self.status = status
         self.logs = logs
         self.answer = answer
         self.reasoning = reasoning
+        self.activity = activity
 
     def on_step(self, step: int, max_steps: int) -> None:
         self.step = step
@@ -381,15 +431,16 @@ class SplitPaneAgentEvents(AgentEventHandler):
         self._invalidate()
 
     def on_tool_start(self, name: str, arguments: dict[str, Any]) -> None:
-        self._append_log(f"[tool] {name} {json.dumps(arguments, ensure_ascii=False)}")
+        self._append_activity(f"tool: {name}")
+        self._append_log(f"== tool: {name} ==\n{json.dumps(arguments, ensure_ascii=False, indent=2)}")
         self._set_status(f"running {name}")
         self._invalidate()
 
     def on_tool_result(self, name: str, ok: bool, output: str) -> None:
         full = f"[{name} {'ok' if ok else 'error'}]\n{output}"
         self.full_logs.append(full)
-        shown = summarize_tool_output(name, ok, output) if self.compact else _trim(output, 5000)
-        self._append_log(f"[{name} {'ok' if ok else 'error'}]\n{shown}")
+        shown = summarize_tool_output(name, ok, output) if self.compact else format_tool_output(name, output, compact=False)
+        self._append_log(f"== {name} {'ok' if ok else 'error'} ==\n{shown}")
         self._set_status(f"{name} {'ok' if ok else 'failed'}")
         self._invalidate()
 
@@ -400,6 +451,10 @@ class SplitPaneAgentEvents(AgentEventHandler):
     def _append_log(self, text: str) -> None:
         if self.logs:
             self.logs.text = (self.logs.text + "\n\n" + text).strip()
+
+    def _append_activity(self, text: str) -> None:
+        if self.activity:
+            self.activity.text = (self.activity.text + "\n" + text).strip()
 
     def _invalidate(self) -> None:
         if self.app:
@@ -422,21 +477,53 @@ def run_split_pane_interactive(
     logs = TextArea(text="Compact output enabled. Use /expand or F4 for full logs.", scrollbar=True, focusable=True, wrap_lines=False)
     answer = TextArea(text="", scrollbar=True, focusable=True, wrap_lines=True)
     reasoning = TextArea(text="", scrollbar=True, focusable=True, wrap_lines=True)
+    activity = TextArea(text="Ready. Type a task, /status, /review, /expand, or /help.", scrollbar=True, focusable=True, wrap_lines=True)
     input_box = TextArea(height=3, prompt="DeepSeek> ", multiline=False)
     bindings = KeyBindings()
-    state: dict[str, Any] = {"running": False, "cancel_requested": False, "last_prompt": ""}
+    state: dict[str, Any] = {"running": False, "cancel_requested": False, "last_prompt": "", "approval": None}
     lock = threading.Lock()
     agent.config.cancel_check = lambda: bool(state["cancel_requested"])
 
+    def request_decision(prompt: str, detail: str = "") -> bool:
+        event = threading.Event()
+        request = {"prompt": prompt, "detail": detail, "event": event, "result": False}
+        state["approval"] = request
+        events._append_activity(f"approval needed: {prompt}\nType y/yes//approve or n/no//reject.")
+        if detail:
+            logs.text = detail
+        events._set_status("waiting for approval")
+        events._invalidate()
+        event.wait()
+        state["approval"] = None
+        return bool(request["result"])
+
+    def request_hunk_decisions(hunks: list[PatchHunk]) -> list[HunkDecision]:
+        decisions: list[HunkDecision] = []
+        for index, hunk in enumerate(hunks, start=1):
+            detail = f"Hunk {index}/{len(hunks)}: {hunk.path}\n\n{hunk.diff}"
+            accepted = request_decision("Accept this hunk?", detail)
+            decisions.append(accepted)
+        return decisions
+
+    agent.tools.ask = request_decision
+    agent.tools.approve_diff = lambda prompt, diff: request_decision(prompt, diff)
+    agent.tools.approve_hunks = request_hunk_decisions
+
     @bindings.add("c-d")
     def _(event) -> None:
-        event.app.exit(result=0)
+        if state["running"]:
+            state["cancel_requested"] = True
+            events._append_activity("Cancel requested. Exit after current step returns.")
+            event.app.invalidate()
+        else:
+            event.app.exit(result=0)
 
     @bindings.add("c-l")
     def _(event) -> None:
         logs.text = ""
         answer.text = ""
         reasoning.text = ""
+        activity.text = ""
         event.app.invalidate()
 
     @bindings.add("tab")
@@ -454,12 +541,14 @@ def run_split_pane_interactive(
         input_box.text = ""
         if not prompt:
             return True
+        if resolve_pending_approval(prompt):
+            return True
         if handle_split_command(prompt):
             return True
 
         with lock:
             if state["running"]:
-                events._append_log("Task is still running. Use /status, /cancel, /review, /expand, or /compact while it finishes.")
+                events._append_activity("Task is still running. Use /status, /cancel, /review, /expand, or /compact.")
                 events._invalidate()
                 return True
             state["running"] = True
@@ -468,6 +557,7 @@ def run_split_pane_interactive(
 
         answer.text = ""
         reasoning.text = ""
+        events._append_activity(f"user: {prompt}")
         events._set_status("running in background")
 
         def worker() -> None:
@@ -491,18 +581,66 @@ def run_split_pane_interactive(
         events._invalidate()
         return True
 
+    def resolve_pending_approval(prompt: str) -> bool:
+        request = state.get("approval")
+        if not request:
+            return False
+        normalized = prompt.strip().lower()
+        if normalized in {"y", "yes", "/approve", "approve"}:
+            request["result"] = True
+        elif normalized in {"n", "no", "/reject", "reject"}:
+            request["result"] = False
+        elif normalized == "/cancel":
+            state["cancel_requested"] = True
+            request["result"] = False
+            events._append_activity("Approval rejected and cancel requested.")
+        elif normalized == "/expand":
+            events.compact = False
+            logs.text = "\n\n".join(events.full_logs) or logs.text
+            events._append_activity("expanded logs; approval still pending")
+            events._invalidate()
+            return True
+        elif normalized == "/compact":
+            events.compact = True
+            logs.text = request.get("detail") or "Compact output enabled. Use /expand or F4 for full logs."
+            events._append_activity("compact logs; approval still pending")
+            events._invalidate()
+            return True
+        elif normalized == "/review":
+            completed = subprocess.run(["git", "diff", "--", "."], cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+            logs.text = completed.stdout or completed.stderr or "No git diff."
+            events._append_activity("review opened; approval still pending")
+            events._invalidate()
+            return True
+        elif normalized in {"/status", "status"}:
+            events._append_activity(f"waiting approval: {request['prompt']}")
+            events._invalidate()
+            return True
+        else:
+            events._append_activity("Approval pending. Type y/yes//approve or n/no//reject.")
+            events._invalidate()
+            return True
+        request["event"].set()
+        events._append_activity("approved" if request["result"] else "rejected")
+        events._invalidate()
+        return True
+
     def handle_split_command(prompt: str) -> bool:
+        if prompt == "/help":
+            events._append_activity("commands: /status, /cancel, /review, /expand, /compact, /clear, /exit. Approval: y/n or /approve//reject.")
+            events._invalidate()
+            return True
         if prompt in {"/exit", "/quit"}:
             if state["running"]:
                 state["cancel_requested"] = True
-                events._append_log("Cancel requested. Exit will happen after the current step returns.")
+                events._append_activity("Cancel requested. Exit will happen after the current step returns.")
                 events._invalidate()
                 return True
             app.exit(result=0)
             return True
         if prompt == "/clear":
             if state["running"]:
-                events._append_log("Cannot clear while a task is running. Use /cancel first.")
+                events._append_activity("Cannot clear while a task is running. Use /cancel first.")
                 events._invalidate()
                 return True
             agent.messages.clear()
@@ -510,47 +648,53 @@ def run_split_pane_interactive(
             logs.text = ""
             answer.text = ""
             reasoning.text = ""
+            activity.text = "Conversation cleared."
             return True
         if prompt == "/review":
             completed = subprocess.run(["git", "diff", "--", "."], cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
             logs.text = completed.stdout or completed.stderr or "No git diff."
+            events._append_activity("review opened in Logs panel")
             return True
         if prompt == "/status":
             running = "running" if state["running"] else "idle"
-            events._append_log(f"[status]\n{running}; step {events.step}/{events.max_steps}; prompt: {state['last_prompt'] or '(none)'}")
+            approval = "; waiting approval" if state.get("approval") else ""
+            events._append_activity(f"status: {running}; step {events.step}/{events.max_steps}; prompt: {state['last_prompt'] or '(none)'}{approval}")
             events._invalidate()
             return True
         if prompt == "/cancel":
             if state["running"]:
                 state["cancel_requested"] = True
-                events._append_log("[cancel]\nCancel requested. The current model request or shell command may need to return first.")
+                events._append_activity("Cancel requested. Current model request or shell command may need to return first.")
                 events._set_status("cancel requested")
             else:
-                events._append_log("[cancel]\nNo task is running.")
+                events._append_activity("No task is running.")
             events._invalidate()
             return True
         if prompt == "/expand":
             events.compact = False
             logs.text = "\n\n".join(events.full_logs) or logs.text
+            events._append_activity("expanded logs")
             return True
         if prompt == "/compact":
             events.compact = True
             logs.text = "Compact output enabled. Use /expand or F4 for full logs."
+            events._append_activity("compact logs")
             return True
         return False
 
     input_box.buffer.accept_handler = submit
-    body = build_split_layout(status, logs, reasoning, answer, input_box, layout_mode)
+    body = build_split_layout(status, logs, reasoning, answer, activity, input_box, layout_mode)
     app = Application(layout=Layout(body, focused_element=input_box), key_bindings=bindings, full_screen=True, mouse_support=True)
-    events.bind(app, status, logs, answer, reasoning)
+    events.bind(app, status, logs, answer, reasoning, activity)
     return int(app.run() or 0)
 
 
-def build_split_layout(status: TextArea, logs: TextArea, reasoning: TextArea, answer: TextArea, input_box: TextArea, layout_mode: str):
+def build_split_layout(status: TextArea, logs: TextArea, reasoning: TextArea, answer: TextArea, activity: TextArea, input_box: TextArea, layout_mode: str):
     if layout_mode == "logs-right":
-        main = VSplit([HSplit([Frame(reasoning, title="Reasoning"), Frame(answer, title="Answer")]), Frame(logs, title="Logs")])
+        execution = VSplit([HSplit([Frame(reasoning, title="Reasoning"), Frame(answer, title="Answer")]), Frame(logs, title="Logs")])
     elif layout_mode == "stacked":
-        main = HSplit([Frame(logs, title="Logs"), Frame(reasoning, title="Reasoning"), Frame(answer, title="Answer")])
+        execution = HSplit([Frame(logs, title="Logs"), Frame(reasoning, title="Reasoning"), Frame(answer, title="Answer")])
     else:
-        main = VSplit([Frame(logs, title="Logs"), HSplit([Frame(reasoning, title="Reasoning"), Frame(answer, title="Answer")])])
-    return HSplit([status, main, Frame(input_box, title="Input")])
+        execution = VSplit([Frame(logs, title="Logs"), HSplit([Frame(reasoning, title="Reasoning"), Frame(answer, title="Answer")])])
+    interaction = HSplit([Frame(activity, title="Interaction"), Frame(input_box, title="Input")], height=8)
+    return HSplit([status, Frame(execution, title="Execution"), interaction])
