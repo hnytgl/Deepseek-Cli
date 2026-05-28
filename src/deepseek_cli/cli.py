@@ -28,7 +28,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Codex-style DeepSeek CLI coding agent.",
     )
     parser.add_argument("prompt", nargs="*", help="Task to run. Omit for interactive mode.")
-    parser.add_argument("--cwd", default=".", help="Workspace directory. Defaults to current directory.")
+    parser.add_argument("--cwd", default=None, help="Workspace directory. Defaults to the directory where deepseek is launched.")
     parser.add_argument("--model", default=None, help=f"DeepSeek model. Defaults to env or {DEFAULT_MODEL}.")
     parser.add_argument("--base-url", default=None, help="DeepSeek API base URL.")
     parser.add_argument("--api-key", default=None, help="DeepSeek API key. Prefer DEEPSEEK_API_KEY.")
@@ -84,7 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def create_agent(args: argparse.Namespace) -> DeepSeekAgent:
-    cwd = Path(args.cwd).expanduser().resolve()
+    cwd = resolve_cwd(args.cwd)
     if not cwd.exists():
         raise SystemExit(f"Workspace does not exist: {cwd}")
     if not cwd.is_dir():
@@ -164,6 +164,12 @@ def save_session(agent: DeepSeekAgent, session_name: str | None) -> None:
     SessionStore.default().save(session_name, agent.messages, cwd=agent.config.cwd, model=agent.client.model)
 
 
+def resolve_cwd(value: str | None) -> Path:
+    if not value:
+        return Path.cwd().resolve()
+    return Path(value).expanduser().resolve()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -174,7 +180,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.self_update:
         return self_update(args.self_update)
     if args.show_policy:
-        cwd = Path(args.cwd).expanduser().resolve()
+        cwd = resolve_cwd(args.cwd)
         base_policy = load_project_policy(cwd)
         policy = PermissionConfig(
             approval="auto" if args.yes else (args.approval or base_policy.approval),
@@ -210,7 +216,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.fullscreen:
         code = run_split_pane_interactive(
             agent,
-            cwd=Path(args.cwd).expanduser().resolve(),
+            cwd=agent.config.cwd,
             model=agent.client.model,
             session_name=args.session,
             on_turn_done=lambda: save_session(agent, args.session),
@@ -221,7 +227,7 @@ def main(argv: list[str] | None = None) -> int:
         return code
     code = run_rich_interactive(
         agent,
-        cwd=Path(args.cwd).expanduser().resolve(),
+        cwd=agent.config.cwd,
         model=agent.client.model,
         session_name=args.session,
         on_turn_done=lambda: save_session(agent, args.session),
