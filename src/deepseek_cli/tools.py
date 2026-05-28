@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .policy import PermissionConfig
+from .patch_review import PatchHunk, apply_hunk_decisions, build_hunks
 from .tool_installer import resolve_install_plan
 
 
@@ -269,6 +270,7 @@ class ToolExecutor:
         ask: Callable[[str], bool] | None = None,
         approve_diff: Callable[[str, str], bool] | None = None,
         approve_file_edits: Callable[[list[tuple[Path, str]]], list[bool]] | None = None,
+        approve_hunks: Callable[[list[PatchHunk]], list[bool]] | None = None,
         policy: PermissionConfig | None = None,
     ) -> None:
         self.cwd = cwd.resolve()
@@ -277,6 +279,7 @@ class ToolExecutor:
         self.ask = ask or self._default_ask
         self.approve_diff = approve_diff
         self.approve_file_edits = approve_file_edits
+        self.approve_hunks = approve_hunks
 
     def run(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         tools: dict[str, Callable[[dict[str, Any]], ToolResult]] = {
@@ -409,33 +412,57 @@ class ToolExecutor:
     def _apply_file_edits(self, arguments: dict[str, Any]) -> ToolResult:
         self.policy.check_write()
         files = arguments.get("files") or []
-        planned: list[tuple[Path, str, str]] = []
+        planned: list[tuple[Path, str, str, list[PatchHunk]]] = []
         review_items: list[tuple[Path, str]] = []
+        all_hunks: list[PatchHunk] = []
         for item in files:
             path = self._resolve_checked_path(str(item["path"]))
             content = str(item["content"])
             old = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
             diff = _unified_diff(path, old, content) or f"Create empty file: {path}\n"
+            hunks = build_hunks(path, old, content)
             review_items.append((path, diff))
-            planned.append((path, old, content))
+            planned.append((path, old, content, hunks))
+            all_hunks.extend(hunks)
         if not planned:
             raise ToolError("No file edits were provided.")
         if self.auto_approve:
-            accepted = [True for _ in planned]
+            accepted_files = [True for _ in planned]
+            accepted_hunks = [True for _ in all_hunks]
+        elif self.approve_hunks and all_hunks:
+            accepted_hunks = self.approve_hunks(all_hunks)
+            accepted_files = []
+            cursor = 0
+            for _path, _old, _content, hunks in planned:
+                decisions = accepted_hunks[cursor : cursor + len(hunks)]
+                accepted_files.append(any(decisions))
+                cursor += len(hunks)
         elif self.approve_file_edits:
-            accepted = self.approve_file_edits(review_items)
+            accepted_files = self.approve_file_edits(review_items)
+            accepted_hunks = []
         else:
-            accepted = []
+            accepted_files = []
             for path, diff in review_items:
-                accepted.append(self.ask(f"Apply edit for {path}?\n{diff}"))
+                accepted_files.append(self.ask(f"Apply edit for {path}?\n{diff}"))
+            accepted_hunks = []
         applied = 0
         rejected = 0
-        for accept, (path, _old, content) in zip(accepted, planned):
-            if not accept:
-                rejected += 1
-                continue
+        hunk_cursor = 0
+        for accept, (path, old, content, hunks) in zip(accepted_files, planned):
+            if accepted_hunks and hunks:
+                decisions = accepted_hunks[hunk_cursor : hunk_cursor + len(hunks)]
+                hunk_cursor += len(hunks)
+                content_to_write = apply_hunk_decisions(old, content, hunks, decisions)
+                if content_to_write == old:
+                    rejected += 1
+                    continue
+            else:
+                if not accept:
+                    rejected += 1
+                    continue
+                content_to_write = content
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content, encoding="utf-8", newline="")
+            path.write_text(content_to_write, encoding="utf-8", newline="")
             applied += 1
         return ToolResult(applied > 0, f"Applied {applied} file edit(s); rejected={rejected}.")
 
