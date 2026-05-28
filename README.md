@@ -8,7 +8,7 @@
 - 支持 `deepseek-chat` 和 `deepseek-reasoner` 等 DeepSeek 模型。
 - 终端窗口式交互界面，显示进度、状态、工具调用和最终回复。
 - 支持流式输出模型回复，任务执行时可以看到回复逐步生成。
-- 支持多轮对话，能持续理解当前任务上下文。
+- 支持多轮对话，默认最多 128 个自动工具步骤，并按约 1,000,000 字符上下文预算裁剪历史，减少长任务过早停止。
 - 自动工具调用：读文件、写文件、替换文本、列目录、运行 shell 命令。
 - 写文件和替换文件前显示 unified diff 预览，并等待批准。
 - Git 状态感知、自动创建分支、提交、推送并创建 GitHub PR。
@@ -17,6 +17,7 @@
 - 命令白名单/黑名单，支持更细粒度的 shell 权限控制。
 - 输入历史、Ctrl+D 退出、Ctrl+L 清屏、可滚动日志和多文件 review 视图。
 - 真正的 split-pane 全屏 TUI：左侧日志，右侧思考/回复，底部输入框，并启用鼠标滚动。
+- 全屏 TUI 中任务在后台执行，执行过程中仍可输入 `/status`、`/cancel`、`/review`、`/expand` 或 `/compact` 交互。
 - Codex CLI 风格紧凑输出：默认只显示状态和摘要，长工具结果折叠保存，用快捷键或命令展开。
 - 按项目保存权限策略，团队项目可以复用同一套安全配置。
 - 补丁支持 hunk 级别逐段接受或拒绝，减少“一次全收/全拒”的风险。
@@ -99,6 +100,7 @@ deepseek --fullscreen
 - 底部是输入框。
 - 鼠标滚轮会滚动当前聚焦面板，`Tab` 可以切换焦点。
 - 默认是紧凑输出，长结果会折叠；按 `F4` 或输入 `/expand` 展开完整日志。
+- 执行中也可以继续输入命令：`/status` 查看当前进度，`/cancel` 会在当前模型请求或工具调用返回后尽快停止后续步骤。
 
 切换布局：
 
@@ -185,6 +187,8 @@ deepseek --sandbox unrestricted
 - `/clear`：清空当前对话上下文。
 - `/logs`：打开可滚动日志视图。
 - `/review`：打开当前 Git 多文件 diff review 视图。
+- `/status`：查看当前任务是否还在运行以及工具步进度。
+- `/cancel`：请求取消当前任务，通常会在当前模型请求或工具调用返回后停止。
 - `/compact`：切回紧凑输出模式。
 - `/expand`：展开完整工具输出。
 - `/exit` 或 `/quit`：退出。
@@ -207,7 +211,7 @@ deepseek --sandbox unrestricted
 DeepSeek 可以自动调用这些本地工具：
 
 - `shell`：在当前工作区运行命令。
-- `read_file`：分页读取 UTF-8 文本文件，返回 `offset`、`end_offset`、`total_chars`、`has_more` 和 `next_offset`，避免大文件截断后反复读取同一段。
+- `read_file`：分页读取 UTF-8 文本文件，默认单页 100,000 字符，返回 `offset`、`end_offset`、`total_chars`、`has_more` 和 `next_offset`，避免大文件截断后反复读取同一段。
 - `write_file`：写入 UTF-8 文本文件，并自动创建父目录。
 - `replace_in_file`：在文件中替换精确文本。
 - `list_dir`：列出目录内容。
@@ -361,9 +365,9 @@ deepseek --self-update "git+https://github.com/hnytgl/deepseek-cli.git"
 
 ```powershell
 python scripts/update_release_hashes.py `
-  --version 0.5.0 `
-  --homebrew-tar .\dist\deepseek-cli-v0.5.0.tar.gz `
-  --scoop-zip .\dist\deepseek-cli-v0.5.0.zip `
+  --version 0.7.0 `
+  --homebrew-tar .\dist\deepseek-cli-v0.7.0.tar.gz `
+  --scoop-zip .\dist\deepseek-cli-v0.7.0.zip `
   --winget-windows-zip .\dist\deepseek-windows-x64.zip `
   --check
 ```
@@ -371,7 +375,7 @@ python scripts/update_release_hashes.py `
 创建带自动 release notes 的 GitHub release：
 
 ```powershell
-python scripts/create_release.py 0.6.0 --draft
+python scripts/create_release.py 0.7.0 --draft
 ```
 
 发布到真实 registry 的辅助入口：
