@@ -54,7 +54,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--session", default=None, help="Save and resume a named session.")
     parser.add_argument("--resume", action="store_true", help="Resume the latest or named session.")
     parser.add_argument("--no-stream", action="store_true", help="Disable streaming API responses.")
-    parser.add_argument("--max-steps", type=int, default=24, help="Maximum model/tool loop steps.")
+    parser.add_argument("--max-steps", type=int, default=128, help="Maximum model/tool loop steps.")
+    parser.add_argument(
+        "--max-context-chars",
+        type=int,
+        default=1_000_000,
+        help="Approximate maximum conversation context characters sent to the model.",
+    )
     parser.add_argument("--temperature", type=float, default=0.2, help="Sampling temperature.")
     parser.add_argument("--plain", action="store_true", help="Use plain input/output instead of the Rich TUI.")
     parser.add_argument("--fullscreen", action="store_true", help="Use an alternate full-screen terminal surface.")
@@ -116,7 +122,13 @@ def create_agent(args: argparse.Namespace) -> DeepSeekAgent:
     return DeepSeekAgent(
         client=client,
         tools=tools,
-        config=AgentConfig(cwd=cwd, max_steps=args.max_steps, temperature=args.temperature, stream=not args.no_stream),
+        config=AgentConfig(
+            cwd=cwd,
+            max_steps=args.max_steps,
+            max_context_chars=args.max_context_chars,
+            temperature=args.temperature,
+            stream=not args.no_stream,
+        ),
         messages=messages,
     )
 
