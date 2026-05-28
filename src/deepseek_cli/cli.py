@@ -10,7 +10,15 @@ from .api import DEFAULT_MODEL, DeepSeekAPIError, DeepSeekClient
 from .policy import PermissionConfig, load_project_policy, save_project_policy
 from .session import SessionStore
 from .tools import ToolExecutor
-from .ui import RichAgentEvents, RichDiffConfirmer, RichFileEditConfirmer, RichToolConfirmer, run_rich_interactive
+from .ui import (
+    RichAgentEvents,
+    RichDiffConfirmer,
+    RichFileEditConfirmer,
+    RichHunkConfirmer,
+    RichToolConfirmer,
+    run_rich_interactive,
+    run_split_pane_interactive,
+)
 from .updater import run_doctor, self_update
 
 
@@ -92,6 +100,7 @@ def create_agent(args: argparse.Namespace) -> DeepSeekAgent:
         ask=RichToolConfirmer(),
         approve_diff=RichDiffConfirmer(),
         approve_file_edits=RichFileEditConfirmer(),
+        approve_hunks=RichHunkConfirmer(),
         policy=policy,
     )
     messages = []
@@ -179,13 +188,22 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.plain:
         return run_interactive(agent, session_name=args.session)
+    if args.fullscreen:
+        code = run_split_pane_interactive(
+            agent,
+            cwd=Path(args.cwd).expanduser().resolve(),
+            model=agent.client.model,
+            session_name=args.session,
+            on_turn_done=lambda: save_session(agent, args.session),
+        )
+        save_session(agent, args.session)
+        return code
     code = run_rich_interactive(
         agent,
         cwd=Path(args.cwd).expanduser().resolve(),
         model=agent.client.model,
         session_name=args.session,
         on_turn_done=lambda: save_session(agent, args.session),
-        fullscreen=args.fullscreen,
     )
     save_session(agent, args.session)
     return code
