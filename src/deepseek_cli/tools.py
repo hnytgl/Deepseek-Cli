@@ -85,7 +85,7 @@ def tool_definitions() -> list[dict[str, Any]]:
                         },
                         "limit": {
                             "type": "integer",
-                            "description": "Maximum characters to return. Defaults to 20000.",
+                            "description": "Maximum characters to return. Defaults to 100000.",
                             "minimum": 1,
                         },
                         "max_chars": {
@@ -373,7 +373,7 @@ class ToolExecutor:
     def _read_file(self, arguments: dict[str, Any]) -> ToolResult:
         path = self._resolve_checked_path(str(arguments["path"]))
         offset = int(arguments.get("offset") or 0)
-        limit = int(arguments.get("limit") or arguments.get("max_chars") or 20000)
+        limit = int(arguments.get("limit") or arguments.get("max_chars") or 100000)
         if offset < 0:
             raise ToolError("offset must be >= 0.")
         if limit <= 0:
