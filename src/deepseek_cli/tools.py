@@ -73,14 +73,24 @@ def tool_definitions() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "read_file",
-                "description": "Read a UTF-8 text file from the workspace.",
+                "description": "Read a UTF-8 text file page from the workspace. Use offset/limit to continue large files.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "path": {"type": "string"},
-                        "max_chars": {
+                        "offset": {
+                            "type": "integer",
+                            "description": "Character offset to start reading from. Defaults to 0.",
+                            "minimum": 0,
+                        },
+                        "limit": {
                             "type": "integer",
                             "description": "Maximum characters to return. Defaults to 20000.",
+                            "minimum": 1,
+                        },
+                        "max_chars": {
+                            "type": "integer",
+                            "description": "Deprecated alias for limit.",
                             "minimum": 1,
                         },
                     },
@@ -362,11 +372,33 @@ class ToolExecutor:
 
     def _read_file(self, arguments: dict[str, Any]) -> ToolResult:
         path = self._resolve_checked_path(str(arguments["path"]))
-        max_chars = int(arguments.get("max_chars") or 20000)
+        offset = int(arguments.get("offset") or 0)
+        limit = int(arguments.get("limit") or arguments.get("max_chars") or 20000)
+        if offset < 0:
+            raise ToolError("offset must be >= 0.")
+        if limit <= 0:
+            raise ToolError("limit must be > 0.")
         content = path.read_text(encoding="utf-8", errors="replace")
-        if len(content) > max_chars:
-            content = content[:max_chars] + f"\n[truncated to {max_chars} chars]"
-        return ToolResult(True, content)
+        total_chars = len(content)
+        page = content[offset : offset + limit]
+        end_offset = offset + len(page)
+        has_more = end_offset < total_chars
+        payload = {
+            "path": str(path),
+            "offset": offset,
+            "limit": limit,
+            "end_offset": end_offset,
+            "total_chars": total_chars,
+            "has_more": has_more,
+            "next_offset": end_offset if has_more else None,
+            "content": page,
+        }
+        if has_more:
+            payload["instruction"] = (
+                "More content is available. Call read_file again with "
+                f"offset={end_offset} and limit={limit} to continue."
+            )
+        return ToolResult(True, json.dumps(payload, ensure_ascii=False))
 
     def _write_file(self, arguments: dict[str, Any]) -> ToolResult:
         self.policy.check_write()
