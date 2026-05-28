@@ -6,9 +6,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from prompt_toolkit import PromptSession
+from prompt_toolkit import Application, PromptSession
+from prompt_toolkit.buffer import Buffer
+from prompt_toolkit.filters import Condition
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.layout import HSplit, Layout, VSplit, Window
+from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
+from prompt_toolkit.layout.dimension import Dimension
+from prompt_toolkit.widgets import Box, Frame, TextArea
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -19,6 +25,7 @@ from rich.table import Table
 from rich.text import Text
 
 from .agent import AgentEventHandler, DeepSeekAgent
+from .patch_review import PatchHunk
 from .session import default_session_dir
 
 
@@ -276,3 +283,164 @@ class RichFileEditConfirmer:
             self.console.print(Panel(Syntax(diff, "diff", word_wrap=True), title=f"Review {path}", border_style="yellow"))
             accepted.append(Confirm.ask(f"[yellow]Apply this file edit? {path}[/yellow]", default=False, console=self.console))
         return accepted
+
+
+class RichHunkConfirmer:
+    def __init__(self, console: Console | None = None) -> None:
+        self.console = console or Console()
+
+    def __call__(self, hunks: list[PatchHunk]) -> list[bool]:
+        accepted: list[bool] = []
+        for index, hunk in enumerate(hunks, start=1):
+            self.console.print(Panel(Syntax(hunk.diff, "diff", word_wrap=True), title=f"Hunk {index}: {hunk.path}", border_style="yellow"))
+            accepted.append(Confirm.ask(f"[yellow]Apply this hunk? {hunk.path} #{index}[/yellow]", default=False, console=self.console))
+        return accepted
+
+
+@dataclass
+class SplitPaneAgentEvents(AgentEventHandler):
+    app: Application | None = None
+    status: TextArea | None = None
+    logs: TextArea | None = None
+    answer: TextArea | None = None
+    reasoning: TextArea | None = None
+    step: int = 0
+    max_steps: int = 0
+
+    def bind(self, app: Application, status: TextArea, logs: TextArea, answer: TextArea, reasoning: TextArea) -> None:
+        self.app = app
+        self.status = status
+        self.logs = logs
+        self.answer = answer
+        self.reasoning = reasoning
+
+    def on_step(self, step: int, max_steps: int) -> None:
+        self.step = step
+        self.max_steps = max_steps
+        self._set_status("Requesting DeepSeek")
+        if self.answer:
+            self.answer.text = ""
+        if self.reasoning:
+            self.reasoning.text = ""
+        self._invalidate()
+
+    def on_model_delta(self, content: str) -> None:
+        if self.answer:
+            self.answer.text += content
+        self._set_status("Streaming answer")
+        self._invalidate()
+
+    def on_model_message(self, content: str) -> None:
+        if self.answer and not self.answer.text:
+            self.answer.text = content
+        self._set_status("Received answer")
+        self._invalidate()
+
+    def on_reasoning_delta(self, content: str) -> None:
+        if self.reasoning:
+            self.reasoning.text += content
+        self._set_status("Streaming reasoning")
+        self._invalidate()
+
+    def on_reasoning(self, content: str) -> None:
+        if self.reasoning and not self.reasoning.text:
+            self.reasoning.text = content
+        self._set_status("Received reasoning")
+        self._invalidate()
+
+    def on_tool_start(self, name: str, arguments: dict[str, Any]) -> None:
+        self._append_log(f"[tool] {name} {json.dumps(arguments, ensure_ascii=False)}")
+        self._set_status(f"Running tool {name}")
+        self._invalidate()
+
+    def on_tool_result(self, name: str, ok: bool, output: str) -> None:
+        self._append_log(f"[{name} {'ok' if ok else 'error'}]\n{_trim(output, 3000)}")
+        self._set_status(f"Tool {name} {'completed' if ok else 'failed'}")
+        self._invalidate()
+
+    def _set_status(self, text: str) -> None:
+        if self.status:
+            self.status.text = f"DeepSeek Codex CLI | {text} | step {self.step}/{self.max_steps}"
+
+    def _append_log(self, text: str) -> None:
+        if self.logs:
+            self.logs.text = (self.logs.text + "\n\n" + text).strip()
+
+    def _invalidate(self) -> None:
+        if self.app:
+            self.app.invalidate()
+
+
+def run_split_pane_interactive(
+    agent: DeepSeekAgent,
+    *,
+    cwd: Path,
+    model: str,
+    session_name: str | None = None,
+    on_turn_done: Callable[[], None] | None = None,
+) -> int:
+    events = SplitPaneAgentEvents()
+    agent.events = events
+    status = TextArea(text=f"DeepSeek Codex CLI | {cwd} | {model} | {session_name or 'no session'}", height=1, focusable=False)
+    logs = TextArea(text="Logs will appear here. Mouse wheel scrolls focused panes.", scrollbar=True, focusable=True, wrap_lines=False)
+    answer = TextArea(text="", scrollbar=True, focusable=True, wrap_lines=True)
+    reasoning = TextArea(text="", scrollbar=True, focusable=True, wrap_lines=True)
+    input_box = TextArea(height=3, prompt="深问> ", multiline=False)
+    bindings = KeyBindings()
+
+    @bindings.add("c-d")
+    def _(event) -> None:
+        event.app.exit(result=0)
+
+    @bindings.add("c-l")
+    def _(event) -> None:
+        logs.text = ""
+        answer.text = ""
+        reasoning.text = ""
+        event.app.invalidate()
+
+    @bindings.add("tab")
+    def _(event) -> None:
+        event.app.layout.focus_next()
+
+    def submit(_: Buffer) -> bool:
+        prompt = input_box.text.strip()
+        input_box.text = ""
+        if not prompt:
+            return True
+        if prompt in {"/exit", "/quit"}:
+            app.exit(result=0)
+            return True
+        if prompt == "/clear":
+            agent.messages.clear()
+            agent.__post_init__()
+            logs.text = ""
+            answer.text = ""
+            reasoning.text = ""
+            return True
+        if prompt == "/review":
+            completed = subprocess.run(["git", "diff", "--", "."], cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+            logs.text = completed.stdout or completed.stderr or "No git diff."
+            return True
+        result = agent.run_turn(prompt)
+        answer.text = result or answer.text
+        if on_turn_done:
+            on_turn_done()
+        return True
+
+    input_box.buffer.accept_handler = submit
+    body = HSplit(
+        [
+            status,
+            VSplit(
+                [
+                    Frame(logs, title="Logs"),
+                    HSplit([Frame(reasoning, title="Reasoning"), Frame(answer, title="Answer")]),
+                ]
+            ),
+            Frame(input_box, title="Input"),
+        ]
+    )
+    app = Application(layout=Layout(body, focused_element=input_box), key_bindings=bindings, full_screen=True, mouse_support=True)
+    events.bind(app, status, logs, answer, reasoning)
+    return int(app.run() or 0)
