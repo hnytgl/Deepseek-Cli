@@ -3,6 +3,10 @@ from __future__ import annotations
 import difflib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypeAlias
+
+
+HunkDecision: TypeAlias = bool | str
 
 
 @dataclass(frozen=True)
@@ -13,6 +17,8 @@ class PatchHunk:
     new_start: int
     new_end: int
     diff: str
+    old_text: str
+    new_text: str
 
 
 def build_hunks(path: Path, old: str, new: str) -> list[PatchHunk]:
@@ -42,19 +48,23 @@ def build_hunks(path: Path, old: str, new: str) -> list[PatchHunk]:
                 new_start=new_start,
                 new_end=new_end,
                 diff=diff,
+                old_text="".join(old_chunk),
+                new_text="".join(new_chunk),
             )
         )
     return hunks
 
 
-def apply_hunk_decisions(old: str, new: str, hunks: list[PatchHunk], accepted: list[bool]) -> str:
+def apply_hunk_decisions(old: str, new: str, hunks: list[PatchHunk], decisions: list[HunkDecision]) -> str:
     old_lines = old.splitlines(keepends=True)
     new_lines = new.splitlines(keepends=True)
     result: list[str] = []
     old_cursor = 0
-    for hunk, accept in zip(hunks, accepted):
+    for hunk, decision in zip(hunks, decisions):
         result.extend(old_lines[old_cursor : hunk.old_start])
-        if accept:
+        if isinstance(decision, str):
+            result.extend(decision.splitlines(keepends=True))
+        elif decision:
             result.extend(new_lines[hunk.new_start : hunk.new_end])
         else:
             result.extend(old_lines[hunk.old_start : hunk.old_end])
