@@ -58,6 +58,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--temperature", type=float, default=0.2, help="Sampling temperature.")
     parser.add_argument("--plain", action="store_true", help="Use plain input/output instead of the Rich TUI.")
     parser.add_argument("--fullscreen", action="store_true", help="Use an alternate full-screen terminal surface.")
+    parser.add_argument(
+        "--layout",
+        choices=["balanced", "logs-right", "stacked"],
+        default="balanced",
+        help="Fullscreen split-pane layout.",
+    )
+    parser.add_argument("--expanded-output", action="store_true", help="Show full tool output by default instead of compact summaries.")
     parser.add_argument("--doctor", action="store_true", help="Check local installation requirements.")
     parser.add_argument(
         "--self-update",
@@ -195,6 +202,8 @@ def main(argv: list[str] | None = None) -> int:
             model=agent.client.model,
             session_name=args.session,
             on_turn_done=lambda: save_session(agent, args.session),
+            layout_mode=args.layout,
+            compact=not args.expanded_output,
         )
         save_session(agent, args.session)
         return code
@@ -204,6 +213,7 @@ def main(argv: list[str] | None = None) -> int:
         model=agent.client.model,
         session_name=args.session,
         on_turn_done=lambda: save_session(agent, args.session),
+        compact=not args.expanded_output,
     )
     save_session(agent, args.session)
     return code
