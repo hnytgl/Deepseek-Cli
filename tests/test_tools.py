@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from deepseek_cli.tools import ToolExecutor
@@ -14,7 +15,9 @@ def test_write_read_and_replace_file(tmp_path: Path) -> None:
 
     read = executor.run("read_file", {"path": "demo.txt"})
     assert read.ok
-    assert read.output == "hello codex"
+    read_payload = json.loads(read.output)
+    assert read_payload["content"] == "hello codex"
+    assert read_payload["has_more"] is False
 
     replace = executor.run("replace_in_file", {"path": "demo.txt", "old": "codex", "new": "deepseek"})
     assert replace.ok
@@ -40,6 +43,23 @@ def test_write_file_uses_diff_approval(tmp_path: Path) -> None:
 
     assert result.ok
     assert "+hello" in diffs[0]
+
+
+def test_read_file_pages_large_content(tmp_path: Path) -> None:
+    path = tmp_path / "big.txt"
+    path.write_text("0123456789", encoding="utf-8")
+    executor = ToolExecutor(tmp_path, auto_approve=True)
+
+    first = executor.run("read_file", {"path": "big.txt", "limit": 4})
+    second = executor.run("read_file", {"path": "big.txt", "offset": 4, "limit": 4})
+
+    first_payload = json.loads(first.output)
+    second_payload = json.loads(second.output)
+    assert first_payload["content"] == "0123"
+    assert first_payload["has_more"] is True
+    assert first_payload["next_offset"] == 4
+    assert second_payload["content"] == "4567"
+    assert second_payload["next_offset"] == 8
 
 
 def test_workspace_sandbox_blocks_path_escape(tmp_path: Path) -> None:
