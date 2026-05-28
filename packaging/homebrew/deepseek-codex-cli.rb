@@ -3,7 +3,7 @@ class DeepseekCodexCli < Formula
 
   desc "Codex-style command line coding agent powered by DeepSeek"
   homepage "https://github.com/hnytgl/deepseek-cli"
-  url "https://github.com/hnytgl/deepseek-cli/archive/refs/tags/v0.7.0.tar.gz"
+  url "https://github.com/hnytgl/deepseek-cli/archive/refs/tags/v0.8.0.tar.gz"
   sha256 "REPLACE_WITH_RELEASE_TARBALL_SHA256"
   license "MIT"
 
