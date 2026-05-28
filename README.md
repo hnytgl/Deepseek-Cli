@@ -16,11 +16,11 @@
 - 默认工作区沙箱，防止文件工具越权读写工作区之外的路径。
 - 命令白名单/黑名单，支持更细粒度的 shell 权限控制。
 - 输入历史、Ctrl+D 退出、Ctrl+L 清屏、可滚动日志和多文件 review 视图。
-- 真正的 split-pane 全屏 TUI：左侧日志，右侧思考/回复，底部输入框，并启用鼠标滚动。
-- 全屏 TUI 中任务在后台执行，执行过程中仍可输入 `/status`、`/cancel`、`/review`、`/expand` 或 `/compact` 交互。
+- 真正的 split-pane 全屏 TUI：上方是执行区，下方是交互区和输入框，并启用鼠标滚动。
+- 全屏 TUI 中任务在后台执行，执行过程中仍可输入 `/status`、`/cancel`、`/review`、`/expand`、`/compact`，也可以直接在界面里批准或拒绝工具调用。
 - Codex CLI 风格紧凑输出：默认只显示状态和摘要，长工具结果折叠保存，用快捷键或命令展开。
 - 按项目保存权限策略，团队项目可以复用同一套安全配置。
-- 补丁支持 hunk 级别逐段接受或拒绝，减少“一次全收/全拒”的风险。
+- 补丁支持 hunk 级别逐段接受或拒绝，也支持内置行级 diff 编辑，不再依赖外部编辑器。
 - 可以在明确授权后按需检测和安装本机缺失工具，并根据 Windows/macOS/Linux 自动选择可用包管理器。
 - 跨平台安装脚本、`--doctor` 环境检查、`--self-update` 自更新，以及 Windows/macOS/Linux 单文件二进制构建 workflow。
 - GitHub release notes 自动生成，PyPI/Homebrew/Scoop/winget 发布辅助脚本。
@@ -94,13 +94,13 @@ deepseek --fullscreen
 
 全屏界面中：
 
-- 左侧是可滚动日志。
-- 右侧上方是 reasoning / 思考内容。
-- 右侧下方是模型回复。
-- 底部是输入框。
+- 上方 `Execution` 是执行区，包含日志、reasoning / 思考内容和模型回复。
+- 下方 `Interaction` 会记录用户输入、状态、批准请求和取消请求。
+- 最底部 `Input` 是始终可用的输入框。
 - 鼠标滚轮会滚动当前聚焦面板，`Tab` 可以切换焦点。
 - 默认是紧凑输出，长结果会折叠；按 `F4` 或输入 `/expand` 展开完整日志。
 - 执行中也可以继续输入命令：`/status` 查看当前进度，`/cancel` 会在当前模型请求或工具调用返回后尽快停止后续步骤。
+- 如果执行中需要批准 shell、写文件或 hunk 修改，直接在输入框里输入 `y` / `n` 或 `/approve` / `/reject`。
 
 切换布局：
 
@@ -260,7 +260,7 @@ Shell 控制：
 
 ## 补丁编辑和多文件 Review
 
-DeepSeek 可以使用 `apply_file_edits` 一次提交多文件修改。CLI 会逐个展示每个 hunk 的 unified diff，你可以按 hunk 接受、拒绝，或者选择 `edit` 调用本机编辑器对该 hunk 的新内容做行级编辑，确认后才会真正写入。你也可以随时在交互模式中输入：
+DeepSeek 可以使用 `apply_file_edits` 一次提交多文件修改。CLI 会逐个展示每个 hunk 的 unified diff，你可以按 hunk 接受、拒绝，或者选择 `edit` 打开内置行级 diff UI。行级 UI 会把旧行和新行并排显示，你可以选择保留全部新行、拒绝该 hunk、只保留指定新行，或者直接输入替换文本，确认后才会真正写入。你也可以随时在交互模式中输入：
 
 ```text
 /review
@@ -365,9 +365,9 @@ deepseek --self-update "git+https://github.com/hnytgl/deepseek-cli.git"
 
 ```powershell
 python scripts/update_release_hashes.py `
-  --version 0.7.0 `
-  --homebrew-tar .\dist\deepseek-cli-v0.7.0.tar.gz `
-  --scoop-zip .\dist\deepseek-cli-v0.7.0.zip `
+  --version 0.8.0 `
+  --homebrew-tar .\dist\deepseek-cli-v0.8.0.tar.gz `
+  --scoop-zip .\dist\deepseek-cli-v0.8.0.zip `
   --winget-windows-zip .\dist\deepseek-windows-x64.zip `
   --check
 ```
@@ -375,7 +375,7 @@ python scripts/update_release_hashes.py `
 创建带自动 release notes 的 GitHub release：
 
 ```powershell
-python scripts/create_release.py 0.7.0 --draft
+python scripts/create_release.py 0.8.0 --draft
 ```
 
 发布到真实 registry 的辅助入口：
@@ -387,12 +387,28 @@ python scripts/publish_registries.py --scoop-bucket C:\path\to\scoop-bucket
 python scripts/publish_registries.py --winget-pkgs C:\path\to\winget-pkgs
 ```
 
-这些命令会执行真实上传或复制 manifest 到对应 registry 仓库。PyPI 需要已配置凭据或 Trusted Publishing；Homebrew/Scoop/winget 仍需要向对应仓库提交 PR 并通过审核。
+这些命令会执行真实上传或复制 manifest 到对应 registry 仓库。PyPI 需要已配置凭据或 Trusted Publishing。
+
+复制 manifest 后自动创建 registry PR：
+
+```powershell
+python scripts/publish_registries.py `
+  --homebrew-tap C:\path\to\homebrew-tap `
+  --scoop-bucket C:\path\to\scoop-bucket `
+  --winget-pkgs C:\path\to\winget-pkgs `
+  --version 0.8.0 `
+  --open-pr
+```
+
+检查 PyPI/Homebrew/Scoop/winget 是否已经能检索到指定版本：
+
+```powershell
+python scripts/publish_registries.py --check-status --version 0.8.0
+```
 
 ## 和 Codex CLI 看齐的方向
 
-这个项目当前已经具备 Codex CLI 风格的基础能力：split-pane 全屏 TUI、紧凑输出、长内容折叠展开、多轮对话、流式输出、自动工具调用、本地文件编辑、命令执行、hunk 级 diff 审批、hunk 行级编辑、Git/PR 工作流、会话恢复、权限沙箱、可滚动日志、多文件 review、命令 allow/deny 策略、项目策略、按需安装工具、跨平台安装检查、单文件二进制构建、SHA256 模板回填和 release notes 生成。后续可以继续增强：
+这个项目当前已经具备 Codex CLI 风格的基础能力：split-pane 全屏 TUI、紧凑输出、长内容折叠展开、多轮对话、流式输出、自动工具调用、本地文件编辑、命令执行、hunk 级 diff 审批、内置行级 diff UI、Git/PR 工作流、会话恢复、权限沙箱、可滚动日志、多文件 review、命令 allow/deny 策略、项目策略、按需安装工具、跨平台安装检查、单文件二进制构建、SHA256 模板回填、release notes 生成、registry PR 自动创建和 registry 发布状态检查。后续可以继续增强：
 
-- 行级 diff UI 而不是外部编辑器。
-- 自动提交 Homebrew/Scoop/winget PR。
-- 自动检查 registry 发布状态。
+- 更接近 Codex CLI 的会话搜索和任务回放。
+- 更细的 TUI 主题配置。
