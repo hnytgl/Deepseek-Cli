@@ -124,6 +124,20 @@ def test_apply_file_edits_can_reject_one_file(tmp_path: Path) -> None:
     assert not (tmp_path / "b.txt").exists()
 
 
+def test_apply_file_edits_can_accept_one_hunk(tmp_path: Path) -> None:
+    path = tmp_path / "demo.txt"
+    path.write_text("a\nkeep\nb\n", encoding="utf-8")
+    executor = ToolExecutor(
+        tmp_path,
+        approve_hunks=lambda hunks: [index == 0 for index, _hunk in enumerate(hunks)],
+    )
+
+    result = executor.run("apply_file_edits", {"files": [{"path": "demo.txt", "content": "A\nkeep\nB\n"}]})
+
+    assert result.ok
+    assert path.read_text(encoding="utf-8") == "A\nkeep\nb\n"
+
+
 def test_check_tool_reports_missing(tmp_path: Path) -> None:
     executor = ToolExecutor(tmp_path, auto_approve=True)
 
