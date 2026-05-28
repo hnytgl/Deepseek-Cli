@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .policy import PermissionConfig
-from .patch_review import PatchHunk, apply_hunk_decisions, build_hunks
+from .patch_review import HunkDecision, PatchHunk, apply_hunk_decisions, build_hunks
 from .tool_installer import resolve_install_plan
 
 
@@ -280,7 +280,7 @@ class ToolExecutor:
         ask: Callable[[str], bool] | None = None,
         approve_diff: Callable[[str, str], bool] | None = None,
         approve_file_edits: Callable[[list[tuple[Path, str]]], list[bool]] | None = None,
-        approve_hunks: Callable[[list[PatchHunk]], list[bool]] | None = None,
+        approve_hunks: Callable[[list[PatchHunk]], list[HunkDecision]] | None = None,
         policy: PermissionConfig | None = None,
     ) -> None:
         self.cwd = cwd.resolve()
@@ -460,7 +460,7 @@ class ToolExecutor:
             raise ToolError("No file edits were provided.")
         if self.auto_approve:
             accepted_files = [True for _ in planned]
-            accepted_hunks = [True for _ in all_hunks]
+            accepted_hunks: list[HunkDecision] = [True for _ in all_hunks]
         elif self.approve_hunks and all_hunks:
             accepted_hunks = self.approve_hunks(all_hunks)
             accepted_files = []
