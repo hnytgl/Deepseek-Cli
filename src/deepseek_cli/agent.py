@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from .api import DeepSeekClient
 from .tools import ToolExecutor, tool_definitions
@@ -29,9 +29,11 @@ Working rules:
 @dataclass
 class AgentConfig:
     cwd: Path
-    max_steps: int = 24
+    max_steps: int = 128
+    max_context_chars: int = 1_000_000
     temperature: float = 0.2
     stream: bool = True
+    cancel_check: Callable[[], bool] | None = None
 
 
 class AgentEventHandler(Protocol):
@@ -72,10 +74,12 @@ class DeepSeekAgent:
 
         final_text = ""
         for step in range(1, self.config.max_steps + 1):
+            if self._cancelled():
+                return "Cancelled by user."
             if self.events:
                 self.events.on_step(step, self.config.max_steps)
             payload = {
-                "messages": self.messages,
+                "messages": self._prepare_messages(),
                 "tools": tool_definitions(),
                 "tool_choice": "auto",
                 "temperature": self.config.temperature,
@@ -97,10 +101,53 @@ class DeepSeekAgent:
                 return content or final_text
 
             for tool_call in tool_calls:
+                if self._cancelled():
+                    return "Cancelled by user."
                 tool_message = self._execute_tool_call(tool_call)
                 self.messages.append(tool_message)
 
         return "Stopped because max tool steps were reached. Please retry with a narrower request."
+
+    def _cancelled(self) -> bool:
+        return bool(self.config.cancel_check and self.config.cancel_check())
+
+    def _prepare_messages(self) -> list[dict[str, Any]]:
+        budget = max(1, self.config.max_context_chars)
+        if not self.messages:
+            return []
+
+        system = self.messages[0] if self.messages[0].get("role") == "system" else None
+        history = self.messages[1:] if system else self.messages
+        prepared: list[dict[str, Any]] = []
+        used = self._message_size(system) if system else 0
+
+        for message in reversed(history):
+            size = self._message_size(message)
+            if prepared and used + size > budget:
+                break
+            if not prepared and used + size > budget:
+                prepared.append(self._shrink_message(message, max(1, budget - used)))
+                break
+            prepared.append(message)
+            used += size
+
+        prepared.reverse()
+        while prepared and prepared[0].get("role") == "tool":
+            prepared.pop(0)
+        return ([system] if system else []) + prepared
+
+    def _message_size(self, message: dict[str, Any] | None) -> int:
+        if not message:
+            return 0
+        return len(json.dumps(message, ensure_ascii=False))
+
+    def _shrink_message(self, message: dict[str, Any], budget: int) -> dict[str, Any]:
+        shrunk = dict(message)
+        content = str(shrunk.get("content") or "")
+        marker = "\n\n[content trimmed to fit context budget]"
+        allowed = max(0, budget - self._message_size({**shrunk, "content": marker}))
+        shrunk["content"] = content[-allowed:] + marker if allowed else marker
+        return shrunk
 
     def _chat_message(self, payload: dict[str, Any]) -> dict[str, Any]:
         response = self.client.chat(payload)
