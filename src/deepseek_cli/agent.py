@@ -20,6 +20,9 @@ Working rules:
 - Keep final answers concise and include changed files and verification.
 - Never claim a command passed unless a tool result confirms it.
 - When useful, briefly explain current progress before calling tools.
+- For large files, read them page by page with read_file offset/limit.
+- If read_file returns has_more=true, continue with next_offset when the missing content matters.
+- Do not repeatedly read the same truncated page; advance offset, narrow the range, or use shell search.
 """
 
 
