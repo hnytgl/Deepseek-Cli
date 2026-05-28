@@ -31,8 +31,8 @@ def main() -> int:
 
     root = Path(__file__).resolve().parents[1]
     replacements = {
-        "v0.5.0": f"v{args.version}",
-        "0.5.0": args.version,
+        "v0.6.0": f"v{args.version}",
+        "0.6.0": args.version,
     }
     if args.homebrew_tar:
         replacements["REPLACE_WITH_RELEASE_TARBALL_SHA256"] = sha256(args.homebrew_tar)
