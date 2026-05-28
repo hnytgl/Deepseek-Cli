@@ -187,7 +187,7 @@ deepseek --sandbox unrestricted
 DeepSeek 可以自动调用这些本地工具：
 
 - `shell`：在当前工作区运行命令。
-- `read_file`：读取 UTF-8 文本文件。
+- `read_file`：分页读取 UTF-8 文本文件，返回 `offset`、`end_offset`、`total_chars`、`has_more` 和 `next_offset`，避免大文件截断后反复读取同一段。
 - `write_file`：写入 UTF-8 文本文件，并自动创建父目录。
 - `replace_in_file`：在文件中替换精确文本。
 - `list_dir`：列出目录内容。
