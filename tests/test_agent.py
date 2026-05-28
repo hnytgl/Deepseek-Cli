@@ -69,3 +69,34 @@ def test_agent_streams_text(tmp_path: Path) -> None:
     )
 
     assert agent.run_turn("say hi") == "hello stream"
+
+
+def test_agent_trims_context_to_recent_messages(tmp_path: Path) -> None:
+    agent = DeepSeekAgent(
+        client=FakeClient(),  # type: ignore[arg-type]
+        tools=ToolExecutor(tmp_path, auto_approve=True),
+        config=AgentConfig(cwd=tmp_path, max_context_chars=500, stream=False),
+        messages=[
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "old" * 1000},
+            {"role": "assistant", "content": "recent"},
+        ],
+    )
+
+    prepared = agent._prepare_messages()
+
+    assert prepared[0]["role"] == "system"
+    assert prepared[-1]["content"] == "recent"
+    assert all(message.get("content") != "old" * 1000 for message in prepared)
+
+
+def test_agent_cancel_check_stops_before_request(tmp_path: Path) -> None:
+    client = FakeClient()
+    agent = DeepSeekAgent(
+        client=client,  # type: ignore[arg-type]
+        tools=ToolExecutor(tmp_path, auto_approve=True),
+        config=AgentConfig(cwd=tmp_path, cancel_check=lambda: True, stream=False),
+    )
+
+    assert agent.run_turn("stop") == "Cancelled by user."
+    assert client.calls == 0
