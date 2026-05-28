@@ -4,6 +4,10 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag, for example v0.5.0"
+        required: false
 
 permissions:
   contents: read
@@ -40,6 +44,7 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: ${{ matrix.artifact }}.zip
+          generate_release_notes: true
   pypi:
     runs-on: ubuntu-latest
     environment: pypi
@@ -62,3 +67,4 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: deepseek-cli-${{ github.ref_name }}.tar.gz
+          generate_release_notes: true
