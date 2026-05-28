@@ -16,11 +16,11 @@
 - 默认工作区沙箱，防止文件工具越权读写工作区之外的路径。
 - 命令白名单/黑名单，支持更细粒度的 shell 权限控制。
 - 输入历史、Ctrl+D 退出、Ctrl+L 清屏、可滚动日志和多文件 review 视图。
-- 全屏 alternate-screen TUI，可在支持的终端中配合 pager/鼠标滚动查看日志。
+- 真正的 split-pane 全屏 TUI：左侧日志，右侧思考/回复，底部输入框，并启用鼠标滚动。
 - 按项目保存权限策略，团队项目可以复用同一套安全配置。
-- 补丁支持按文件逐个接受或拒绝，减少“一次全收/全拒”的风险。
+- 补丁支持 hunk 级别逐段接受或拒绝，减少“一次全收/全拒”的风险。
 - 可以在明确授权后按需检测和安装本机缺失工具，并根据 Windows/macOS/Linux 自动选择可用包管理器。
-- 跨平台安装脚本、`--doctor` 环境检查和 `--self-update` 自更新。
+- 跨平台安装脚本、`--doctor` 环境检查、`--self-update` 自更新，以及 Windows/macOS/Linux 单文件二进制构建 workflow。
 - 默认在执行 shell、写文件、Git 提交或 PR 前询问确认；可用 `--yes` 开启全自动模式。
 - 支持单次任务模式，也支持进入交互式会话。
 - 使用 Python 标准库完成 API 请求，运行时只依赖 `rich` 负责终端界面。
@@ -83,11 +83,19 @@ deepseek --model deepseek-reasoner "分析这个项目的架构并给出改进�
 deepseek --plain
 ```
 
-使用全屏终端界面：
+使用 split-pane 全屏终端界面：
 
 ```powershell
 deepseek --fullscreen
 ```
+
+全屏界面中：
+
+- 左侧是可滚动日志。
+- 右侧上方是 reasoning / 思考内容。
+- 右侧下方是模型回复。
+- 底部是输入框。
+- 鼠标滚轮会滚动当前聚焦面板，`Tab` 可以切换焦点。
 
 保存并恢复会话：
 
@@ -228,7 +236,7 @@ Shell 控制：
 
 ## 补丁编辑和多文件 Review
 
-DeepSeek 可以使用 `apply_file_edits` 一次提交多文件修改。CLI 会逐个展示每个文件的 unified diff，你可以按文件接受或拒绝，确认后才会真正写入。你也可以随时在交互模式中输入：
+DeepSeek 可以使用 `apply_file_edits` 一次提交多文件修改。CLI 会逐个展示每个 hunk 的 unified diff，你可以按 hunk 接受或拒绝，确认后才会真正写入。你也可以随时在交互模式中输入：
 
 ```text
 /review
@@ -325,14 +333,26 @@ deepseek --self-update "git+https://github.com/hnytgl/deepseek-cli.git"
 - Homebrew：`packaging/homebrew/deepseek-codex-cli.rb`。
 - Scoop：`packaging/scoop/deepseek-codex-cli.json`。
 - winget：`packaging/winget/*.yaml`。
+- 单文件二进制：release 时通过 PyInstaller 构建 `deepseek-windows-x64.zip`、`deepseek-macos-x64.zip`、`deepseek-linux-x64.zip`。
 
 真正发布到这些生态需要对应账号、release 产物和 SHA256 校验值。当前模板中带有 `REPLACE_WITH_*_SHA256` 占位符，发布 release 后替换即可提交到对应 registry。
 
+自动生成并校验 SHA256：
+
+```powershell
+python scripts/update_release_hashes.py `
+  --version 0.5.0 `
+  --homebrew-tar .\dist\deepseek-cli-v0.5.0.tar.gz `
+  --scoop-zip .\dist\deepseek-cli-v0.5.0.zip `
+  --winget-windows-zip .\dist\deepseek-windows-x64.zip `
+  --check
+```
+
 ## 和 Codex CLI 看齐的方向
 
-这个项目当前已经具备 Codex CLI 风格的基础能力：终端 TUI、多轮对话、流式输出、自动工具调用、本地文件编辑、命令执行、diff 审批、Git/PR 工作流、会话恢复、权限沙箱、可滚动日志、多文件 review、命令 allow/deny 策略、项目策略、按需安装工具和跨平台安装检查。后续可以继续增强：
+这个项目当前已经具备 Codex CLI 风格的基础能力：split-pane 全屏 TUI、多轮对话、流式输出、自动工具调用、本地文件编辑、命令执行、hunk 级 diff 审批、Git/PR 工作流、会话恢复、权限沙箱、可滚动日志、多文件 review、命令 allow/deny 策略、项目策略、按需安装工具、跨平台安装检查、单文件二进制构建和 SHA256 模板回填。后续可以继续增强：
 
-- 真正的 split-pane 全屏 TUI 和鼠标滚动事件处理。
-- hunk 级别补丁接受/拒绝。
-- 构建 Windows/macOS/Linux 单文件二进制。
-- 自动生成并校验 Homebrew/Scoop/winget SHA256。
+- 更细的 split-pane 布局配置。
+- 对单个 hunk 做行级编辑。
+- 发布到真实 PyPI/Homebrew/Scoop/winget registry。
+- 自动生成 release notes。
