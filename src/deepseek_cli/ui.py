@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import tempfile
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -129,7 +130,7 @@ def print_welcome(console: Console, cwd: Path, model: str, session_name: str | N
     body.add_row("workspace", str(cwd))
     body.add_row("model", model)
     body.add_row("session", session_name or "none")
-    body.add_row("commands", "/exit, /clear, /help, /logs, /review, /compact, /expand")
+    body.add_row("commands", "/exit, /clear, /help, /logs, /review, /status, /cancel, /compact, /expand")
     console.print(Panel(body, title="DeepSeek CLI", border_style="cyan"))
 
 
@@ -140,6 +141,8 @@ def print_help(console: Console) -> None:
             "/clear: clear conversation\n"
             "/logs: open full logs in a pager\n"
             "/review: show current git diff\n"
+            "/status: show current task progress\n"
+            "/cancel: stop after the current model/tool step when possible\n"
             "/compact: compact Codex-like output\n"
             "/expand: full output mode\n"
             "/help: show help\n\n"
@@ -421,6 +424,9 @@ def run_split_pane_interactive(
     reasoning = TextArea(text="", scrollbar=True, focusable=True, wrap_lines=True)
     input_box = TextArea(height=3, prompt="DeepSeek> ", multiline=False)
     bindings = KeyBindings()
+    state: dict[str, Any] = {"running": False, "cancel_requested": False, "last_prompt": ""}
+    lock = threading.Lock()
+    agent.config.cancel_check = lambda: bool(state["cancel_requested"])
 
     @bindings.add("c-d")
     def _(event) -> None:
@@ -448,10 +454,57 @@ def run_split_pane_interactive(
         input_box.text = ""
         if not prompt:
             return True
+        if handle_split_command(prompt):
+            return True
+
+        with lock:
+            if state["running"]:
+                events._append_log("Task is still running. Use /status, /cancel, /review, /expand, or /compact while it finishes.")
+                events._invalidate()
+                return True
+            state["running"] = True
+            state["cancel_requested"] = False
+            state["last_prompt"] = prompt
+
+        answer.text = ""
+        reasoning.text = ""
+        events._set_status("running in background")
+
+        def worker() -> None:
+            try:
+                result = agent.run_turn(prompt)
+                if result:
+                    answer.text = result
+            except Exception as exc:
+                events._append_log(f"[error]\n{exc}")
+                events._set_status("error")
+            finally:
+                with lock:
+                    state["running"] = False
+                    state["cancel_requested"] = False
+                if on_turn_done:
+                    on_turn_done()
+                events._set_status("ready")
+                events._invalidate()
+
+        threading.Thread(target=worker, daemon=True).start()
+        events._invalidate()
+        return True
+
+    def handle_split_command(prompt: str) -> bool:
         if prompt in {"/exit", "/quit"}:
+            if state["running"]:
+                state["cancel_requested"] = True
+                events._append_log("Cancel requested. Exit will happen after the current step returns.")
+                events._invalidate()
+                return True
             app.exit(result=0)
             return True
         if prompt == "/clear":
+            if state["running"]:
+                events._append_log("Cannot clear while a task is running. Use /cancel first.")
+                events._invalidate()
+                return True
             agent.messages.clear()
             agent.__post_init__()
             logs.text = ""
@@ -462,6 +515,20 @@ def run_split_pane_interactive(
             completed = subprocess.run(["git", "diff", "--", "."], cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
             logs.text = completed.stdout or completed.stderr or "No git diff."
             return True
+        if prompt == "/status":
+            running = "running" if state["running"] else "idle"
+            events._append_log(f"[status]\n{running}; step {events.step}/{events.max_steps}; prompt: {state['last_prompt'] or '(none)'}")
+            events._invalidate()
+            return True
+        if prompt == "/cancel":
+            if state["running"]:
+                state["cancel_requested"] = True
+                events._append_log("[cancel]\nCancel requested. The current model request or shell command may need to return first.")
+                events._set_status("cancel requested")
+            else:
+                events._append_log("[cancel]\nNo task is running.")
+            events._invalidate()
+            return True
         if prompt == "/expand":
             events.compact = False
             logs.text = "\n\n".join(events.full_logs) or logs.text
@@ -470,11 +537,7 @@ def run_split_pane_interactive(
             events.compact = True
             logs.text = "Compact output enabled. Use /expand or F4 for full logs."
             return True
-        result = agent.run_turn(prompt)
-        answer.text = result or answer.text
-        if on_turn_done:
-            on_turn_done()
-        return True
+        return False
 
     input_box.buffer.accept_handler = submit
     body = build_split_layout(status, logs, reasoning, answer, input_box, layout_mode)
