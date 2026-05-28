@@ -1,9 +1,9 @@
 {
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Codex-style command line coding agent powered by DeepSeek.",
   "homepage": "https://github.com/hnytgl/deepseek-cli",
   "license": "MIT",
-  "url": "https://github.com/hnytgl/deepseek-cli/archive/refs/tags/v0.4.0.zip",
+  "url": "https://github.com/hnytgl/deepseek-cli/archive/refs/tags/v0.5.0.zip",
   "hash": "REPLACE_WITH_RELEASE_ZIP_SHA256",
   "installer": {
     "script": "python -m pip install --user $dir"
