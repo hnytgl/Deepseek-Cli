@@ -22,7 +22,7 @@ def test_resolve_cwd_uses_explicit_directory(tmp_path: Path) -> None:
     assert resolve_cwd(str(child)) == child.resolve()
 
 
-@pytest.mark.parametrize("option", ["--max-steps", "--max-context-chars"])
+@pytest.mark.parametrize("option", ["--max-steps", "--max-context-chars", "--api-timeout"])
 def test_positive_cli_limits(option: str) -> None:
     parser = build_parser()
 
@@ -73,3 +73,16 @@ def test_parser_accepts_theme_and_session_commands() -> None:
 
     assert args.theme == "ocean"
     assert args.sessions == "parser"
+
+
+def test_parser_accepts_api_retry_and_sensitive_session_options() -> None:
+    args = build_parser().parse_args(["--api-timeout", "30.5", "--api-retries", "5", "--save-sensitive"])
+
+    assert args.api_timeout == 30.5
+    assert args.api_retries == 5
+    assert args.save_sensitive is True
+
+
+def test_parser_rejects_negative_api_retries() -> None:
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["--api-retries", "-1"])

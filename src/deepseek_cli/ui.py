@@ -49,7 +49,8 @@ def format_tool_output(name: str, output: str, *, compact: bool) -> str:
         content = str(payload.get("content") or "")
         header = (
             f"file: {payload.get('path')}\n"
-            f"range: {payload.get('offset')}..{payload.get('end_offset')} / {payload.get('total_chars')}"
+            f"range: {payload.get('offset')}..{payload.get('end_offset')} "
+            f"(file: {payload.get('file_size_bytes')} bytes)"
         )
         if payload.get("has_more"):
             header += f"\nnext: read_file offset={payload.get('next_offset')} limit={payload.get('limit')}"

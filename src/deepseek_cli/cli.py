@@ -32,6 +32,20 @@ def positive_int(value: str) -> int:
     return number
 
 
+def nonnegative_int(value: str) -> int:
+    number = int(value)
+    if number < 0:
+        raise argparse.ArgumentTypeError("must be zero or greater")
+    return number
+
+
+def positive_float(value: str) -> float:
+    number = float(value)
+    if number <= 0:
+        raise argparse.ArgumentTypeError("must be greater than zero")
+    return number
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="deepseek",
@@ -42,6 +56,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", default=None, help=f"DeepSeek model. Defaults to env or {DEFAULT_MODEL}.")
     parser.add_argument("--base-url", default=None, help="DeepSeek API base URL.")
     parser.add_argument("--api-key", default=None, help="DeepSeek API key. Prefer DEEPSEEK_API_KEY.")
+    parser.add_argument("--api-timeout", type=positive_float, default=120, help="API request timeout in seconds.")
+    parser.add_argument("--api-retries", type=nonnegative_int, default=3, help="Retries for HTTP 429, 5xx, and network errors.")
     parser.add_argument("--yes", "-y", action="store_true", help="Auto-approve tool execution.")
     parser.add_argument(
         "--approval",
@@ -62,6 +78,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--save-policy", action="store_true", help="Save the effective permission policy into this project.")
     parser.add_argument("--show-policy", action="store_true", help="Print the effective permission policy and exit.")
     parser.add_argument("--session", default=None, help="Save and resume a named session.")
+    parser.add_argument(
+        "--save-sensitive",
+        action="store_true",
+        help="Save session messages without automatic secret and home-path redaction.",
+    )
     parser.add_argument("--resume", action="store_true", help="Resume the latest or named session.")
     parser.add_argument(
         "--sessions",
@@ -118,6 +139,8 @@ def create_agent(args: argparse.Namespace) -> DeepSeekAgent:
         api_key=args.api_key,
         base_url=args.base_url,
         model=args.model,
+        timeout=args.api_timeout,
+        max_retries=args.api_retries,
     )
     base_policy = load_project_policy(cwd)
     approval = "auto" if args.yes else (args.approval or base_policy.approval)
@@ -168,7 +191,12 @@ def format_sessions(store: SessionStore, query: str = "") -> str:
     return "\n".join(rows)
 
 
-def run_interactive(agent: DeepSeekAgent, *, session_name: str | None = None) -> int:
+def run_interactive(
+    agent: DeepSeekAgent,
+    *,
+    session_name: str | None = None,
+    save_sensitive: bool = False,
+) -> int:
     print("DeepSeek CLI. Type /help for commands.")
     store = SessionStore.default()
     while True:
@@ -212,15 +240,21 @@ def run_interactive(agent: DeepSeekAgent, *, session_name: str | None = None) ->
         except DeepSeekAPIError as exc:
             print(f"Error: {exc}", file=sys.stderr)
             continue
-        save_session(agent, session_name)
+        save_session(agent, session_name, save_sensitive=save_sensitive)
         if answer:
             print(f"\n{answer}")
 
 
-def save_session(agent: DeepSeekAgent, session_name: str | None) -> None:
+def save_session(agent: DeepSeekAgent, session_name: str | None, *, save_sensitive: bool = False) -> None:
     if not session_name:
         return
-    SessionStore.default().save(session_name, agent.messages, cwd=agent.config.cwd, model=agent.client.model)
+    SessionStore.default().save(
+        session_name,
+        agent.messages,
+        cwd=agent.config.cwd,
+        model=agent.client.model,
+        redact=not save_sensitive,
+    )
 
 
 def resolve_cwd(value: str | None) -> Path:
@@ -285,35 +319,35 @@ def main(argv: list[str] | None = None) -> int:
         except DeepSeekAPIError as exc:
             print(f"Error: {exc}", file=sys.stderr)
             return 2
-        save_session(agent, args.session)
+        save_session(agent, args.session, save_sensitive=args.save_sensitive)
         if answer:
             print(f"\n{answer}")
         return 0
     if args.plain:
-        return run_interactive(agent, session_name=args.session)
+        return run_interactive(agent, session_name=args.session, save_sensitive=args.save_sensitive)
     if args.fullscreen:
         code = run_split_pane_interactive(
             agent,
             cwd=agent.config.cwd,
             model=agent.client.model,
             session_name=args.session,
-            on_turn_done=lambda: save_session(agent, args.session),
+            on_turn_done=lambda: save_session(agent, args.session, save_sensitive=args.save_sensitive),
             layout_mode=args.layout,
             compact=not args.expanded_output,
             theme_name=args.theme,
         )
-        save_session(agent, args.session)
+        save_session(agent, args.session, save_sensitive=args.save_sensitive)
         return code
     code = run_rich_interactive(
         agent,
         cwd=agent.config.cwd,
         model=agent.client.model,
         session_name=args.session,
-        on_turn_done=lambda: save_session(agent, args.session),
+        on_turn_done=lambda: save_session(agent, args.session, save_sensitive=args.save_sensitive),
         compact=not args.expanded_output,
         theme_name=args.theme,
     )
-    save_session(agent, args.session)
+    save_session(agent, args.session, save_sensitive=args.save_sensitive)
     return code
 
 

@@ -342,7 +342,11 @@ class ToolExecutor:
 
     def _shell(self, arguments: dict[str, Any]) -> ToolResult:
         command = str(arguments["command"])
-        timeout = int(arguments.get("timeout_seconds") or 60)
+        try:
+            timeout = int(arguments.get("timeout_seconds") or 60)
+        except (TypeError, ValueError) as exc:
+            raise ToolError("timeout_seconds must be an integer between 1 and 600.") from exc
+        timeout = max(1, min(timeout, 600))
         self.policy.check_command(command)
         self._confirm(f"Run shell command: {command}")
         if platform.system() == "Windows":
@@ -380,21 +384,49 @@ class ToolExecutor:
             raise ToolError("offset must be >= 0.")
         if limit <= 0:
             raise ToolError("limit must be > 0.")
-        content = path.read_text(encoding="utf-8", errors="replace")
-        total_chars = len(content)
-        page = content[offset : offset + limit]
+        file_size = path.stat().st_size
+        with path.open("rb") as binary:
+            sample = binary.read(4096)
+        if b"\x00" in sample:
+            raise ToolError(
+                f"File appears to be binary ({file_size} bytes). read_file only supports UTF-8 text files."
+            )
+
+        page_parts: list[str] = []
+        skipped = 0
+        collected = 0
+        has_more = False
+        with path.open("r", encoding="utf-8", errors="replace", newline="") as stream:
+            while chunk := stream.read(65536):
+                if skipped + len(chunk) <= offset:
+                    skipped += len(chunk)
+                    continue
+                start = max(0, offset - skipped)
+                available = chunk[start:]
+                needed = limit - collected
+                page_parts.append(available[:needed])
+                collected += min(len(available), needed)
+                skipped += len(chunk)
+                if len(available) > needed:
+                    has_more = True
+                    break
+                if collected >= limit:
+                    has_more = bool(stream.read(1))
+                    break
+        page = "".join(page_parts)
         end_offset = offset + len(page)
-        has_more = end_offset < total_chars
         payload = {
             "path": str(path),
             "offset": offset,
             "limit": limit,
             "end_offset": end_offset,
-            "total_chars": total_chars,
+            "file_size_bytes": file_size,
             "has_more": has_more,
             "next_offset": end_offset if has_more else None,
             "content": page,
         }
+        if file_size > 10 * 1024 * 1024:
+            payload["warning"] = "Large file detected; continue reading in bounded pages."
         if has_more:
             payload["instruction"] = (
                 "More content is available. Call read_file again with "

@@ -31,7 +31,7 @@
 - GitHub release notes 自动生成，PyPI/Homebrew/Scoop/winget 发布辅助脚本。
 - 默认在执行 shell、写文件、Git 提交或 PR 前询问确认；可用 `--yes` 开启全自动模式。
 - 支持单次任务模式，也支持进入交互式会话。
-- 使用 Python 标准库完成 API 请求，运行时只依赖 `rich` 负责终端界面。
+- 使用 Python 标准库完成 API 请求，运行时仅依赖 `rich`、`prompt-toolkit` 两个轻量依赖。
 
 ## 安装
 
@@ -84,6 +84,14 @@ deepseek --yes "实现 TODO 并运行测试"
 ```powershell
 deepseek --model deepseek-reasoner "分析这个项目的架构并给出改进建议"
 ```
+
+设置 API 超时和网络重试次数：
+
+```powershell
+deepseek --api-timeout 180 --api-retries 5 "分析当前项目"
+```
+
+API 请求遇到 HTTP 429、5xx 或临时网络错误时会进行指数退避重试，并优先遵循服务端的 `Retry-After` 响应头。
 
 使用普通文本模式，不启用窗口界面：
 
@@ -138,6 +146,8 @@ deepseek --replay-session my-project
 ```
 
 `--sessions` 会搜索会话名称、工作目录、模型和消息正文。`--replay-session` 会输出适合阅读或重定向保存的完整对话记录，不需要设置 API Key。
+
+会话保存时默认会掩码 API Key、Token、Authorization、Cookie、密码和用户主目录路径。只有在明确需要保存原始内容时才使用 `--save-sensitive`；包含敏感信息的会话文件不应共享或提交到仓库。
 
 选择 TUI 主题：
 
@@ -237,7 +247,7 @@ deepseek --sandbox unrestricted
 DeepSeek 可以自动调用这些本地工具：
 
 - `shell`：在当前工作区运行命令。
-- `read_file`：分页读取 UTF-8 文本文件，默认单页 100,000 字符，返回 `offset`、`end_offset`、`total_chars`、`has_more` 和 `next_offset`，避免大文件截断后反复读取同一段。
+- `read_file`：按块分页读取 UTF-8 文本文件，默认单页 100,000 字符，返回 `offset`、`end_offset`、`file_size_bytes`、`has_more` 和 `next_offset`；不会先把整个文件载入内存，并会拒绝包含 NUL 字节的二进制文件。
 - `write_file`：写入 UTF-8 文本文件，并自动创建父目录。
 - `replace_in_file`：在文件中替换精确文本。
 - `list_dir`：列出目录内容。
@@ -340,6 +350,11 @@ gh auth status
 
 命令行参数会覆盖环境变量。
 
+API 稳定性相关参数：
+
+- `--api-timeout SECONDS`：单次 API 请求超时，默认 120 秒。
+- `--api-retries COUNT`：HTTP 429、5xx 和网络错误的重试次数，默认 3 次。
+
 ## 本地验证
 
 ```powershell
@@ -393,9 +408,9 @@ deepseek --self-update "git+https://github.com/hnytgl/deepseek-cli.git"
 
 ```powershell
 python scripts/update_release_hashes.py `
-  --version 0.8.0 `
-  --homebrew-tar .\dist\deepseek-cli-v0.8.0.tar.gz `
-  --scoop-zip .\dist\deepseek-cli-v0.8.0.zip `
+  --version 0.8.1 `
+  --homebrew-tar .\dist\deepseek-cli-v0.8.1.tar.gz `
+  --scoop-zip .\dist\deepseek-cli-v0.8.1.zip `
   --winget-windows-zip .\dist\deepseek-windows-x64.zip `
   --check
 ```
@@ -403,7 +418,7 @@ python scripts/update_release_hashes.py `
 创建带自动 release notes 的 GitHub release：
 
 ```powershell
-python scripts/create_release.py 0.8.0 --draft
+python scripts/create_release.py 0.8.1 --draft
 ```
 
 发布到真实 registry 的辅助入口：
@@ -424,14 +439,14 @@ python scripts/publish_registries.py `
   --homebrew-tap C:\path\to\homebrew-tap `
   --scoop-bucket C:\path\to\scoop-bucket `
   --winget-pkgs C:\path\to\winget-pkgs `
-  --version 0.8.0 `
+  --version 0.8.1 `
   --open-pr
 ```
 
 检查 PyPI/Homebrew/Scoop/winget 是否已经能检索到指定版本：
 
 ```powershell
-python scripts/publish_registries.py --check-status --version 0.8.0
+python scripts/publish_registries.py --check-status --version 0.8.1
 ```
 
 ## 和 Codex CLI 看齐的方向
