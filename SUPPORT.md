@@ -1,31 +1,31 @@
-# Support
+# 支持说明
 
-## Community Support
+## 社区支持
 
-For reproducible bugs and feature requests, open a GitHub issue and include:
+如果遇到可复现的问题或希望提出功能建议，请创建 GitHub Issue，并尽量提供：
 
-- the affected version or commit
-- operating system and Python version
-- steps to reproduce
-- expected and actual behavior
-- relevant logs with API keys, paths, and other sensitive data removed
+- 受影响的版本号或提交编号
+- 操作系统和 Python 版本
+- 完整的复现步骤
+- 预期行为和实际行为
+- 已删除 API Key、本地路径及其他敏感信息的相关日志
 
-Community support is best effort and does not include a response-time
-guarantee.
+社区支持采用尽力而为的方式，不承诺固定响应时间。
 
-## Commercial Support
+## 商业支持
 
-Paid support is available for organizations and teams that need:
+面向组织和团队提供以下付费服务：
 
-- private deployment and environment configuration
-- model provider or internal API integration
-- permission policy and workflow customization
-- packaging, release automation, and managed upgrades
-- agreed response times and maintenance scope
+- 私有化部署和运行环境配置
+- 模型服务商或内部 API 集成
+- 权限策略和工作流程定制
+- 打包、发布自动化和版本升级维护
+- 约定响应时间和维护范围的技术支持
 
-Contact [hnytgl@163.com](mailto:hnytgl@163.com) with the required outcome,
-environment, and preferred timeline. Scope, deliverables, pricing, and
-authorization are confirmed in writing before work starts.
+请发送邮件至 [hnytgl@163.com](mailto:hnytgl@163.com)，简要说明使用环境、
+期望结果和计划时间。开始工作前，双方将书面确认服务范围、交付内容、
+价格和必要授权。
 
-Never include API keys, access tokens, source archives, or production data in
-an issue or initial email.
+请勿在公开 Issue 或首次联系邮件中提供 API Key、访问令牌、私有源码、
+生产数据或其他敏感信息。
+
