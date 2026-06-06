@@ -102,7 +102,32 @@ def command_names(command: str) -> tuple[str, ...]:
         name = command_name(segment.lstrip("() "))
         if name:
             names.append(name)
+            inner = _interpreter_command(segment, name)
+            if inner:
+                names.extend(command_names(inner))
     return tuple(names)
+
+
+def _interpreter_command(segment: str, name: str) -> str | None:
+    normalized = _normalized_command(name)
+    try:
+        parts = shlex.split(segment.lstrip("() "), posix=False)
+    except ValueError:
+        return None
+    options = {
+        "powershell": {"-command", "-c"},
+        "pwsh": {"-command", "-c"},
+        "cmd": {"/c", "/k"},
+        "bash": {"-c"},
+        "sh": {"-c"},
+        "zsh": {"-c"},
+    }
+    if normalized not in options:
+        return None
+    for index, part in enumerate(parts[1:], start=1):
+        if part.lower() in options[normalized] and index + 1 < len(parts):
+            return " ".join(parts[index + 1 :]).strip("\"'")
+    return None
 
 
 def _split_shell_commands(command: str) -> list[str]:

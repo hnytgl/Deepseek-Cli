@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from .api import DeepSeekAPIError, DeepSeekClient
-from .tools import ToolExecutor, tool_definitions
+from .tools import ToolExecutor, ToolResult, tool_definitions
 
 
 SYSTEM_PROMPT = """You are DeepSeek CLI, an autonomous command-line coding agent.
@@ -220,8 +220,33 @@ class DeepSeekAgent:
         raw_arguments = function.get("arguments") or "{}"
         try:
             arguments = json.loads(raw_arguments)
-        except json.JSONDecodeError:
-            arguments = {}
+        except json.JSONDecodeError as exc:
+            snippet = str(raw_arguments)[:500]
+            result = {
+                "role": "tool",
+                "tool_call_id": tool_call.get("id"),
+                "content": ToolResult(
+                    False,
+                    f"Invalid tool JSON arguments for {name}: {exc.msg}. Raw arguments: {snippet}",
+                ).to_content(),
+            }
+            if self.events:
+                self.events.on_tool_start(name, {})
+                self.events.on_tool_result(name, False, json.loads(result["content"])["output"])
+            return result
+        if not isinstance(arguments, dict):
+            result = ToolResult(
+                False,
+                f"Invalid tool JSON arguments for {name}: expected an object, got {type(arguments).__name__}.",
+            )
+            if self.events:
+                self.events.on_tool_start(name, {})
+                self.events.on_tool_result(name, False, result.output)
+            return {
+                "role": "tool",
+                "tool_call_id": tool_call.get("id"),
+                "content": result.to_content(),
+            }
 
         if self.events:
             self.events.on_tool_start(name, arguments)

@@ -72,3 +72,42 @@ def test_session_transcript_formats_conversation(tmp_path: Path) -> None:
     assert "## user\nhello" in transcript
     assert "## assistant\nhi" in transcript
     assert "hidden" not in transcript
+
+
+def test_session_redacts_secrets_and_home_path_by_default(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("deepseek_cli.session.Path.home", lambda: Path("/home/demo"))
+    store = SessionStore(tmp_path)
+    store.save(
+        "secret",
+        [
+            {
+                "role": "user",
+                "content": (
+                    "path=/home/demo/project token=super-secret-token "
+                    "Authorization: Bearer abc.def.ghi DEEPSEEK_API_KEY=sk-secretvalue"
+                ),
+            }
+        ],
+        cwd=Path("/home/demo/project"),
+        model="deepseek-chat",
+    )
+    raw = store.path_for("secret").read_text(encoding="utf-8")
+
+    assert "/home/demo" not in raw
+    assert "super-secret-token" not in raw
+    assert "abc.def.ghi" not in raw
+    assert "sk-secretvalue" not in raw
+    assert "[REDACTED]" in raw
+
+
+def test_session_can_explicitly_save_unredacted_content(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path)
+    store.save(
+        "raw",
+        [{"role": "user", "content": "token=keep-this-value"}],
+        cwd=tmp_path,
+        model="deepseek-chat",
+        redact=False,
+    )
+
+    assert "keep-this-value" in store.path_for("raw").read_text(encoding="utf-8")

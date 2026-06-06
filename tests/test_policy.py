@@ -34,6 +34,25 @@ def test_command_policy_matches_windows_executable_suffixes() -> None:
         PermissionConfig(deny_commands=("git",)).check_command("git.exe status")
 
 
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ('powershell -Command "python --version; git status"', ("powershell", "python", "git")),
+        ('cmd /c "python --version && git status"', ("cmd", "python", "git")),
+        ('bash -c "python --version && git status"', ("bash", "python", "git")),
+    ],
+)
+def test_command_names_include_nested_interpreter_commands(command: str, expected: tuple[str, ...]) -> None:
+    assert command_names(command) == expected
+
+
+def test_nested_interpreter_command_is_checked_by_policy() -> None:
+    policy = PermissionConfig(deny_commands=("rm",))
+
+    with pytest.raises(PermissionError, match="blocked by policy: rm"):
+        policy.check_command('bash -c "python --version && rm -rf build"')
+
+
 def test_project_policy_round_trip(tmp_path) -> None:
     policy = PermissionConfig(
         approval="auto",

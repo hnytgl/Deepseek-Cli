@@ -120,3 +120,24 @@ def test_agent_reports_malformed_api_response(tmp_path: Path) -> None:
 
     with pytest.raises(DeepSeekAPIError, match="valid choice"):
         agent.run_turn("hello")
+
+
+def test_invalid_tool_json_returns_clear_tool_error(tmp_path: Path) -> None:
+    agent = DeepSeekAgent(
+        client=FakeClient(),  # type: ignore[arg-type]
+        tools=ToolExecutor(tmp_path, auto_approve=True),
+        config=AgentConfig(cwd=tmp_path, stream=False),
+    )
+
+    message = agent._execute_tool_call(
+        {
+            "id": "bad-json",
+            "function": {"name": "write_file", "arguments": '{"path": "demo.txt"'},
+        }
+    )
+    content = json.loads(message["content"])
+
+    assert content["status"] == "error"
+    assert "Invalid tool JSON arguments" in content["output"]
+    assert '{"path": "demo.txt"' in content["output"]
+    assert not (tmp_path / "demo.txt").exists()

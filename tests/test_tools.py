@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 from deepseek_cli.tools import ToolExecutor
@@ -32,6 +33,23 @@ def test_shell_returns_exit_code(tmp_path: Path) -> None:
     assert "[exit_code=0]" in result.output
 
 
+def test_shell_timeout_is_clamped_and_validated(monkeypatch, tmp_path: Path) -> None:
+    timeouts: list[int] = []
+
+    def fake_run(*_args, **kwargs):
+        timeouts.append(kwargs["timeout"])
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr("deepseek_cli.tools.subprocess.run", fake_run)
+    executor = ToolExecutor(tmp_path, auto_approve=True)
+
+    assert executor.run("shell", {"command": "python --version", "timeout_seconds": 9999}).ok
+    assert timeouts == [600]
+    invalid = executor.run("shell", {"command": "python --version", "timeout_seconds": "later"})
+    assert not invalid.ok
+    assert "integer between 1 and 600" in invalid.output
+
+
 def test_write_file_uses_diff_approval(tmp_path: Path) -> None:
     diffs: list[str] = []
     executor = ToolExecutor(
@@ -60,6 +78,14 @@ def test_read_file_pages_large_content(tmp_path: Path) -> None:
     assert first_payload["next_offset"] == 4
     assert second_payload["content"] == "4567"
     assert second_payload["next_offset"] == 8
+
+
+def test_read_file_rejects_binary_content(tmp_path: Path) -> None:
+    (tmp_path / "binary.dat").write_bytes(b"text\x00binary")
+    result = ToolExecutor(tmp_path, auto_approve=True).run("read_file", {"path": "binary.dat"})
+
+    assert not result.ok
+    assert "appears to be binary" in result.output
 
 
 def test_workspace_sandbox_blocks_path_escape(tmp_path: Path) -> None:
