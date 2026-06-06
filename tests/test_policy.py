@@ -9,6 +9,7 @@ from deepseek_cli.policy import PermissionConfig, load_project_policy, save_proj
 def test_command_name_extracts_executable() -> None:
     assert command_name("python -m pytest") == "python"
     assert command_name('"C:\\Program Files\\Git\\bin\\git.exe" status') == "git.exe"
+    assert command_name("/usr/local/bin/python -m pytest") == "python"
 
 
 def test_command_names_extracts_compound_commands() -> None:

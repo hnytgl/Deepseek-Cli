@@ -93,7 +93,7 @@ def command_name(command: str) -> str:
     if not parts:
         return ""
     executable = parts[0].strip("\"'")
-    return Path(executable).name.lower()
+    return _portable_basename(executable).lower()
 
 
 def command_names(command: str) -> tuple[str, ...]:
@@ -146,11 +146,15 @@ def _matches_command(name: str, configured: tuple[str, ...]) -> bool:
 
 
 def _normalized_command(name: str) -> str:
-    lowered = Path(name.strip("\"'")).name.lower()
+    lowered = _portable_basename(name.strip("\"'")).lower()
     for suffix in (".exe", ".cmd", ".bat", ".com"):
         if lowered.endswith(suffix):
             return lowered[: -len(suffix)]
     return lowered
+
+
+def _portable_basename(value: str) -> str:
+    return value.replace("\\", "/").rsplit("/", 1)[-1]
 
 
 def project_policy_path(cwd: Path) -> Path:
