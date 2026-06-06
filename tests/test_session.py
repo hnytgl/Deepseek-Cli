@@ -11,7 +11,7 @@ def test_session_save_and_load(tmp_path: Path) -> None:
     store = SessionStore(tmp_path)
     messages = [{"role": "system", "content": "hello"}]
 
-    store.save("demo", messages, cwd=tmp_path, model="deepseek-chat")
+    store.save("demo", messages, cwd=tmp_path, model="deepseek-v4-flash")
 
     assert store.load("demo") == messages
     assert store.load(latest=True) == messages
@@ -39,13 +39,13 @@ def test_session_search_matches_name_workspace_and_content(tmp_path: Path) -> No
         "api-fix",
         [{"role": "user", "content": "repair streaming responses"}],
         cwd=tmp_path / "backend",
-        model="deepseek-chat",
+        model="deepseek-v4-flash",
     )
     store.save(
         "docs",
         [{"role": "user", "content": "update README"}],
         cwd=tmp_path / "website",
-        model="deepseek-reasoner",
+        model="deepseek-v4-pro",
     )
 
     assert [record.name for record in store.search("streaming")] == ["api-fix"]
@@ -63,7 +63,7 @@ def test_session_transcript_formats_conversation(tmp_path: Path) -> None:
             {"role": "assistant", "content": "hi"},
         ],
         cwd=tmp_path,
-        model="deepseek-chat",
+        model="deepseek-v4-flash",
     )
 
     transcript = store.transcript("demo")
@@ -89,7 +89,7 @@ def test_session_redacts_secrets_and_home_path_by_default(tmp_path: Path, monkey
             }
         ],
         cwd=Path("/home/demo/project"),
-        model="deepseek-chat",
+        model="deepseek-v4-flash",
     )
     raw = store.path_for("secret").read_text(encoding="utf-8")
 
@@ -106,7 +106,7 @@ def test_session_can_explicitly_save_unredacted_content(tmp_path: Path) -> None:
         "raw",
         [{"role": "user", "content": "token=keep-this-value"}],
         cwd=tmp_path,
-        model="deepseek-chat",
+        model="deepseek-v4-flash",
         redact=False,
     )
 

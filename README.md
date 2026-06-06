@@ -8,7 +8,7 @@
 ## 功能特性
 
 - 适配 DeepSeek OpenAI-compatible Chat Completions API。
-- 支持 `deepseek-chat` 和 `deepseek-reasoner` 等 DeepSeek 模型。
+- 支持 `deepseek-v4-flash` 和 `deepseek-v4-pro` 等当前 DeepSeek API 模型。
 - 终端窗口式交互界面，显示进度、状态、工具调用和最终回复。
 - 支持流式输出模型回复，任务执行时可以看到回复逐步生成。
 - 支持多轮对话，默认最多 128 个自动工具步骤，并按约 1,000,000 字符上下文预算裁剪历史，减少长任务过早停止。
@@ -79,10 +79,10 @@ deepseek --cwd C:\path\to\project "修复测试失败的问题"
 deepseek --yes "实现 TODO 并运行测试"
 ```
 
-使用 DeepSeek Reasoner：
+使用 DeepSeek V4 Pro 处理复杂任务：
 
 ```powershell
-deepseek --model deepseek-reasoner "分析这个项目的架构并给出改进建议"
+deepseek --model deepseek-v4-pro "分析这个项目的架构并给出改进建议"
 ```
 
 设置 API 超时和网络重试次数：
@@ -345,7 +345,7 @@ gh auth status
 
 - `DEEPSEEK_API_KEY`：必填，DeepSeek API Key。
 - `DEEPSEEK_BASE_URL`：可选，默认 `https://api.deepseek.com`。
-- `DEEPSEEK_MODEL`：可选，默认 `deepseek-chat`。
+- `DEEPSEEK_MODEL`：可选，默认 `deepseek-v4-flash`。
 - `DEEPSEEK_THEME`：可选，TUI 主题，可设为 `default`、`ocean`、`mono` 或 `high-contrast`。
 
 命令行参数会覆盖环境变量。
