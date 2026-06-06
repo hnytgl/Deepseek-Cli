@@ -200,7 +200,15 @@ def show_logs(console: Console, events: RichAgentEvents) -> None:
 
 
 def show_git_review(console: Console, cwd: Path) -> None:
-    completed = subprocess.run(["git", "diff", "--", "."], cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+    completed = subprocess.run(
+        ["git", "diff", "--", "."],
+        cwd=cwd,
+        text=True,
+        errors="replace",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=60,
+    )
     diff = completed.stdout or completed.stderr or "No git diff."
     with console.pager(styles=True):
         console.print(Panel(Syntax(diff, "diff", word_wrap=True), title="review", border_style="yellow"))
@@ -607,7 +615,15 @@ def run_split_pane_interactive(
             events._invalidate()
             return True
         elif normalized == "/review":
-            completed = subprocess.run(["git", "diff", "--", "."], cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+            completed = subprocess.run(
+                ["git", "diff", "--", "."],
+                cwd=cwd,
+                text=True,
+                errors="replace",
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=60,
+            )
             logs.text = completed.stdout or completed.stderr or "No git diff."
             events._append_activity("review opened; approval still pending")
             events._invalidate()
@@ -651,7 +667,15 @@ def run_split_pane_interactive(
             activity.text = "Conversation cleared."
             return True
         if prompt == "/review":
-            completed = subprocess.run(["git", "diff", "--", "."], cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+            completed = subprocess.run(
+                ["git", "diff", "--", "."],
+                cwd=cwd,
+                text=True,
+                errors="replace",
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=60,
+            )
             logs.text = completed.stdout or completed.stderr or "No git diff."
             events._append_activity("review opened in Logs panel")
             return True

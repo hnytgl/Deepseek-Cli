@@ -47,14 +47,16 @@ class PermissionConfig:
 
     def check_command(self, command: str) -> None:
         self.check_shell()
-        name = command_name(command)
-        if not name:
+        names = command_names(command)
+        if not names:
             raise PermissionError("Empty shell command is not allowed.")
-        if self.deny_commands and name in self.deny_commands:
-            raise PermissionError(f"Command is blocked by policy: {name}")
-        if self.allow_commands and name not in self.allow_commands:
+        denied = next((name for name in names if _matches_command(name, self.deny_commands)), None)
+        if denied:
+            raise PermissionError(f"Command is blocked by policy: {denied}")
+        disallowed = next((name for name in names if not _matches_command(name, self.allow_commands)), None)
+        if self.allow_commands and disallowed:
             allowed = ", ".join(self.allow_commands)
-            raise PermissionError(f"Command is not in allowlist: {name}. Allowed: {allowed}")
+            raise PermissionError(f"Command is not in allowlist: {disallowed}. Allowed: {allowed}")
 
     def check_install_tools(self) -> None:
         self.check_shell()
@@ -94,6 +96,63 @@ def command_name(command: str) -> str:
     return Path(executable).name.lower()
 
 
+def command_names(command: str) -> tuple[str, ...]:
+    names: list[str] = []
+    for segment in _split_shell_commands(command):
+        name = command_name(segment.lstrip("() "))
+        if name:
+            names.append(name)
+    return tuple(names)
+
+
+def _split_shell_commands(command: str) -> list[str]:
+    segments: list[str] = []
+    current: list[str] = []
+    quote: str | None = None
+    index = 0
+    while index < len(command):
+        char = command[index]
+        if quote:
+            current.append(char)
+            if char == quote:
+                quote = None
+            elif char == "\\" and index + 1 < len(command):
+                index += 1
+                current.append(command[index])
+        elif char in {"'", '"'}:
+            quote = char
+            current.append(char)
+        elif char in {";", "|", "&", "\n", "\r"}:
+            segment = "".join(current).strip()
+            if segment:
+                segments.append(segment)
+            current = []
+            while index + 1 < len(command) and command[index + 1] in {";", "|", "&", "\n", "\r"}:
+                index += 1
+        else:
+            current.append(char)
+        index += 1
+    segment = "".join(current).strip()
+    if segment:
+        segments.append(segment)
+    return segments
+
+
+def _matches_command(name: str, configured: tuple[str, ...]) -> bool:
+    if not configured:
+        return False
+    normalized = _normalized_command(name)
+    return any(normalized == _normalized_command(item) for item in configured)
+
+
+def _normalized_command(name: str) -> str:
+    lowered = Path(name.strip("\"'")).name.lower()
+    for suffix in (".exe", ".cmd", ".bat", ".com"):
+        if lowered.endswith(suffix):
+            return lowered[: -len(suffix)]
+    return lowered
+
+
 def project_policy_path(cwd: Path) -> Path:
     return cwd.resolve() / ".deepseek-cli" / "policy.json"
 
@@ -102,7 +161,10 @@ def load_project_policy(cwd: Path) -> PermissionConfig:
     path = project_policy_path(cwd)
     if not path.exists():
         return PermissionConfig()
-    data = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise PermissionError(f"Could not read policy file {path}: {exc}") from exc
     if not isinstance(data, dict):
         raise PermissionError(f"Invalid policy file: {path}")
     return PermissionConfig.from_dict(data)

@@ -7,8 +7,8 @@ from pathlib import Path
 from . import __version__
 from .agent import AgentConfig, DeepSeekAgent
 from .api import DEFAULT_MODEL, DeepSeekAPIError, DeepSeekClient
-from .policy import PermissionConfig, load_project_policy, save_project_policy
-from .session import SessionStore
+from .policy import PermissionConfig, PermissionError as PolicyError, load_project_policy, save_project_policy
+from .session import SessionError, SessionStore
 from .tools import ToolExecutor
 from .ui import (
     RichAgentEvents,
@@ -20,6 +20,13 @@ from .ui import (
     run_split_pane_interactive,
 )
 from .updater import run_doctor, self_update
+
+
+def positive_int(value: str) -> int:
+    number = int(value)
+    if number <= 0:
+        raise argparse.ArgumentTypeError("must be greater than zero")
+    return number
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -54,10 +61,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--session", default=None, help="Save and resume a named session.")
     parser.add_argument("--resume", action="store_true", help="Resume the latest or named session.")
     parser.add_argument("--no-stream", action="store_true", help="Disable streaming API responses.")
-    parser.add_argument("--max-steps", type=int, default=128, help="Maximum model/tool loop steps.")
+    parser.add_argument("--max-steps", type=positive_int, default=128, help="Maximum model/tool loop steps.")
     parser.add_argument(
         "--max-context-chars",
-        type=int,
+        type=positive_int,
         default=1_000_000,
         help="Approximate maximum conversation context characters sent to the model.",
     )
@@ -152,7 +159,11 @@ def run_interactive(agent: DeepSeekAgent, *, session_name: str | None = None) ->
             print("Conversation cleared.")
             continue
 
-        answer = agent.run_turn(prompt)
+        try:
+            answer = agent.run_turn(prompt)
+        except DeepSeekAPIError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            continue
         save_session(agent, session_name)
         if answer:
             print(f"\n{answer}")
@@ -181,7 +192,11 @@ def main(argv: list[str] | None = None) -> int:
         return self_update(args.self_update)
     if args.show_policy:
         cwd = resolve_cwd(args.cwd)
-        base_policy = load_project_policy(cwd)
+        try:
+            base_policy = load_project_policy(cwd)
+        except PolicyError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 2
         policy = PermissionConfig(
             approval="auto" if args.yes else (args.approval or base_policy.approval),
             sandbox=args.sandbox or base_policy.sandbox,
@@ -196,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     try:
         agent = create_agent(args)
-    except DeepSeekAPIError as exc:
+    except (DeepSeekAPIError, PolicyError, SessionError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
 
@@ -206,7 +221,11 @@ def main(argv: list[str] | None = None) -> int:
 
             console = Console()
             agent.events = RichAgentEvents(console)
-        answer = agent.run_turn(" ".join(args.prompt))
+        try:
+            answer = agent.run_turn(" ".join(args.prompt))
+        except DeepSeekAPIError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 2
         save_session(agent, args.session)
         if answer:
             print(f"\n{answer}")

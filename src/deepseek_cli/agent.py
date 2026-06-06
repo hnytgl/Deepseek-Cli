@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
-from .api import DeepSeekClient
+from .api import DeepSeekAPIError, DeepSeekClient
 from .tools import ToolExecutor, tool_definitions
 
 
@@ -151,8 +151,13 @@ class DeepSeekAgent:
 
     def _chat_message(self, payload: dict[str, Any]) -> dict[str, Any]:
         response = self.client.chat(payload)
-        choice = response.get("choices", [{}])[0]
-        return choice.get("message") or {}
+        choices = response.get("choices")
+        if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+            raise DeepSeekAPIError("DeepSeek API response did not include a valid choice.")
+        message = choices[0].get("message")
+        if not isinstance(message, dict):
+            raise DeepSeekAPIError("DeepSeek API response did not include a valid message.")
+        return message
 
     def _stream_message(self, payload: dict[str, Any]) -> dict[str, Any]:
         content_parts: list[str] = []
@@ -160,8 +165,13 @@ class DeepSeekAgent:
         tool_call_parts: dict[int, dict[str, Any]] = {}
 
         for event in self.client.chat_stream(payload):
-            choice = event.get("choices", [{}])[0]
+            choices = event.get("choices")
+            if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+                continue
+            choice = choices[0]
             delta = choice.get("delta") or {}
+            if not isinstance(delta, dict):
+                continue
 
             content = delta.get("content") or ""
             if content:

@@ -29,6 +29,11 @@ dependencies = [
   "rich>=13.7",
 ]
 
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+]
+
 [project.urls]
 Homepage = "https://github.com/hnytgl/deepseek-cli"
 Repository = "https://github.com/hnytgl/deepseek-cli"

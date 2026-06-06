@@ -32,6 +32,7 @@ def run_doctor() -> DoctorReport:
         completed = subprocess.run(
             ["gh", "auth", "status"],
             text=True,
+            errors="replace",
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=30,
@@ -43,5 +44,5 @@ def run_doctor() -> DoctorReport:
 
 def self_update(source: str) -> int:
     command = [sys.executable, "-m", "pip", "install", "--upgrade", source]
-    completed = subprocess.run(command, text=True)
+    completed = subprocess.run(command, text=True, errors="replace")
     return completed.returncode

@@ -248,7 +248,7 @@ Shell 控制：
 - `--save-policy`：把当前有效权限策略保存到项目。
 - `--show-policy`：打印当前有效权限策略。
 
-白名单优先约束可执行命令集合，黑名单用于拦截明确不希望模型执行的命令。命令名按可执行文件名识别，例如 `python -m pytest` 的命令名是 `python`。
+白名单优先约束可执行命令集合，黑名单用于拦截明确不希望模型执行的命令。复合命令中的每一段都会检查，例如 `python --version && git status` 会同时检查 `python` 和 `git`。命令名按可执行文件名识别，并兼容 Windows 的 `.exe`、`.cmd`、`.bat`、`.com` 后缀。
 
 项目策略保存位置：
 
@@ -316,6 +316,7 @@ gh auth status
 ## 本地验证
 
 ```powershell
+python -m pip install -e ".[dev]"
 python -m compileall src tests
 python -m pytest
 deepseek --help

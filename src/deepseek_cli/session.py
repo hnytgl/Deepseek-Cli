@@ -7,6 +7,10 @@ from pathlib import Path
 from typing import Any
 
 
+class SessionError(RuntimeError):
+    """Raised when a saved session cannot be read."""
+
+
 def default_session_dir() -> Path:
     return Path.home() / ".deepseek-cli" / "sessions"
 
@@ -35,9 +39,16 @@ class SessionStore:
         path = self.latest_path() if latest else self.path_for(name or "default")
         if not path or not path.exists():
             return []
-        data = json.loads(path.read_text(encoding="utf-8"))
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise SessionError(f"Could not read session file {path}: {exc}") from exc
+        if not isinstance(data, dict):
+            raise SessionError(f"Invalid session file: {path}")
         messages = data.get("messages", [])
-        return messages if isinstance(messages, list) else []
+        if not isinstance(messages, list) or not all(isinstance(message, dict) for message in messages):
+            raise SessionError(f"Invalid messages in session file: {path}")
+        return messages
 
     def save(self, name: str, messages: list[dict[str, Any]], *, cwd: Path, model: str) -> Path:
         self.root.mkdir(parents=True, exist_ok=True)

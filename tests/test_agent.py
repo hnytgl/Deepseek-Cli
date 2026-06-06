@@ -4,7 +4,10 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from deepseek_cli.agent import AgentConfig, DeepSeekAgent
+from deepseek_cli.api import DeepSeekAPIError
 from deepseek_cli.tools import ToolExecutor
 
 
@@ -100,3 +103,20 @@ def test_agent_cancel_check_stops_before_request(tmp_path: Path) -> None:
 
     assert agent.run_turn("stop") == "Cancelled by user."
     assert client.calls == 0
+
+
+class MalformedClient:
+    def chat(self, payload: dict[str, Any]) -> dict[str, Any]:
+        _ = payload
+        return {"choices": []}
+
+
+def test_agent_reports_malformed_api_response(tmp_path: Path) -> None:
+    agent = DeepSeekAgent(
+        client=MalformedClient(),  # type: ignore[arg-type]
+        tools=ToolExecutor(tmp_path, auto_approve=True),
+        config=AgentConfig(cwd=tmp_path, stream=False),
+    )
+
+    with pytest.raises(DeepSeekAPIError, match="valid choice"):
+        agent.run_turn("hello")
