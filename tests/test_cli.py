@@ -5,7 +5,8 @@ from pathlib import Path
 import pytest
 
 from deepseek_cli.api import DeepSeekAPIError
-from deepseek_cli.cli import build_parser, main, resolve_cwd
+from deepseek_cli.cli import build_parser, format_sessions, main, resolve_cwd
+from deepseek_cli.session import SessionStore
 
 
 def test_resolve_cwd_defaults_to_launch_directory(monkeypatch, tmp_path: Path) -> None:
@@ -50,3 +51,25 @@ def test_show_policy_error_is_user_friendly(tmp_path: Path, capsys) -> None:
 
     assert main(["--cwd", str(tmp_path), "--show-policy"]) == 2
     assert "Error: Could not read policy file" in capsys.readouterr().err
+
+
+def test_format_sessions_includes_preview(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path)
+    store.save(
+        "demo",
+        [{"role": "user", "content": "Workspace: x\n\nfix the parser"}],
+        cwd=tmp_path,
+        model="deepseek-chat",
+    )
+
+    output = format_sessions(store, "parser")
+
+    assert "demo" in output
+    assert "fix the parser" in output
+
+
+def test_parser_accepts_theme_and_session_commands() -> None:
+    args = build_parser().parse_args(["--theme", "ocean", "--sessions", "parser"])
+
+    assert args.theme == "ocean"
+    assert args.sessions == "parser"

@@ -13,10 +13,12 @@
 - 写文件和替换文件前显示 unified diff 预览，并等待批准。
 - Git 状态感知、自动创建分支、提交、推送并创建 GitHub PR。
 - 会话持久化和历史恢复，支持按名称保存上下文。
+- 会话列表、全文搜索和任务回放，可从 CLI 或交互界面检索并加载历史任务。
 - 默认工作区沙箱，防止文件工具越权读写工作区之外的路径。
 - 命令白名单/黑名单，支持更细粒度的 shell 权限控制。
 - 输入历史、Ctrl+D 退出、Ctrl+L 清屏、可滚动日志和多文件 review 视图。
 - 真正的 split-pane 全屏 TUI：上方是执行区，下方是交互区和输入框，并启用鼠标滚动。
+- 内置 `default`、`ocean`、`mono`、`high-contrast` 四套 TUI 主题。
 - 全屏 TUI 中任务在后台执行，执行过程中仍可输入 `/status`、`/cancel`、`/review`、`/expand`、`/compact`，也可以直接在界面里批准或拒绝工具调用。
 - Codex CLI 风格紧凑输出：默认只显示状态和摘要，长工具结果折叠保存，用快捷键或命令展开。
 - 按项目保存权限策略，团队项目可以复用同一套安全配置。
@@ -124,6 +126,25 @@ deepseek --session my-project --resume
 deepseek --resume
 ```
 
+搜索会话和回放任务：
+
+```powershell
+deepseek --sessions
+deepseek --sessions "parser"
+deepseek --replay-session my-project
+```
+
+`--sessions` 会搜索会话名称、工作目录、模型和消息正文。`--replay-session` 会输出适合阅读或重定向保存的完整对话记录，不需要设置 API Key。
+
+选择 TUI 主题：
+
+```powershell
+deepseek --theme ocean
+deepseek --fullscreen --theme high-contrast
+$env:DEEPSEEK_THEME="mono"
+deepseek
+```
+
 开启只读审查模式：
 
 ```powershell
@@ -185,6 +206,8 @@ deepseek --sandbox unrestricted
 
 - `/help`：显示帮助。
 - `/clear`：清空当前对话上下文。
+- `/sessions [关键词]`：列出或搜索已保存会话。
+- `/replay NAME`：把指定会话加载到当前对话，可继续执行后续任务。
 - `/logs`：打开可滚动日志视图。
 - `/review`：打开当前 Git 多文件 diff review 视图。
 - `/status`：查看当前任务是否还在运行以及工具步进度。
@@ -310,6 +333,7 @@ gh auth status
 - `DEEPSEEK_API_KEY`：必填，DeepSeek API Key。
 - `DEEPSEEK_BASE_URL`：可选，默认 `https://api.deepseek.com`。
 - `DEEPSEEK_MODEL`：可选，默认 `deepseek-chat`。
+- `DEEPSEEK_THEME`：可选，TUI 主题，可设为 `default`、`ocean`、`mono` 或 `high-contrast`。
 
 命令行参数会覆盖环境变量。
 
@@ -409,7 +433,4 @@ python scripts/publish_registries.py --check-status --version 0.8.0
 
 ## 和 Codex CLI 看齐的方向
 
-这个项目当前已经具备 Codex CLI 风格的基础能力：split-pane 全屏 TUI、紧凑输出、长内容折叠展开、多轮对话、流式输出、自动工具调用、本地文件编辑、命令执行、hunk 级 diff 审批、内置行级 diff UI、Git/PR 工作流、会话恢复、权限沙箱、可滚动日志、多文件 review、命令 allow/deny 策略、项目策略、按需安装工具、跨平台安装检查、单文件二进制构建、SHA256 模板回填、release notes 生成、registry PR 自动创建和 registry 发布状态检查。后续可以继续增强：
-
-- 更接近 Codex CLI 的会话搜索和任务回放。
-- 更细的 TUI 主题配置。
+这个项目当前已经具备 Codex CLI 风格的基础能力：split-pane 全屏 TUI、可选主题、紧凑输出、长内容折叠展开、多轮对话、会话搜索与任务回放、流式输出、自动工具调用、本地文件编辑、命令执行、hunk 级 diff 审批、内置行级 diff UI、Git/PR 工作流、权限沙箱、可滚动日志、多文件 review、命令 allow/deny 策略、项目策略、按需安装工具、跨平台安装检查、单文件二进制构建、SHA256 模板回填、release notes 生成、registry PR 自动创建和 registry 发布状态检查。

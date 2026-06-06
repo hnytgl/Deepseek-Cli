@@ -24,7 +24,8 @@ from rich.text import Text
 
 from .agent import AgentEventHandler, DeepSeekAgent
 from .patch_review import HunkDecision, PatchHunk
-from .session import default_session_dir
+from .session import SessionError, SessionStore, default_session_dir
+from .theme import Theme, get_theme
 
 
 def _trim(text: str, limit: int = 5000) -> str:
@@ -65,6 +66,7 @@ class RichAgentEvents(AgentEventHandler):
     console: Console
     max_log_items: int = 12
     compact: bool = True
+    theme_name: str = "default"
     step: int = 0
     max_steps: int = 0
     current_status: str = "Waiting"
@@ -117,19 +119,21 @@ class RichAgentEvents(AgentEventHandler):
         self.logs = self.logs[-self.max_log_items :]
 
     def _render(self) -> None:
+        theme = get_theme(self.theme_name)
         self.console.clear()
-        self.console.print(render_header(self.step, self.max_steps, self.current_status))
+        self.console.print(render_header(self.step, self.max_steps, self.current_status, theme))
         if self.streaming_reasoning:
-            self.console.print(Panel(_trim(self.streaming_reasoning, 300 if self.compact else 1600), title="reasoning", border_style="magenta"))
+            self.console.print(Panel(_trim(self.streaming_reasoning, 300 if self.compact else 1600), title="reasoning", border_style=theme.reasoning))
         if self.streaming_answer:
-            self.console.print(Panel(Markdown(_trim(self.streaming_answer, 700 if self.compact else 2200)), title="answer draft", border_style="green"))
+            self.console.print(Panel(Markdown(_trim(self.streaming_answer, 700 if self.compact else 2200)), title="answer draft", border_style=theme.success))
         for title, body in self.logs:
-            style = "cyan" if title.startswith("tool") else "magenta" if title == "reasoning" else "green"
+            style = theme.accent if title.startswith("tool") else theme.reasoning if title == "reasoning" else theme.success
             rendered = summarize_tool_output(title, True, body) if self.compact and title == "tool result" else _trim(body, 500 if self.compact else 5000)
             self.console.print(Panel(rendered, title=title, border_style=style))
 
 
-def render_header(step: int, max_steps: int, status: str) -> Panel:
+def render_header(step: int, max_steps: int, status: str, theme: Theme | None = None) -> Panel:
+    theme = theme or get_theme("default")
     table = Table.grid(expand=True)
     table.add_column(ratio=2)
     table.add_column(ratio=3)
@@ -137,27 +141,30 @@ def render_header(step: int, max_steps: int, status: str) -> Panel:
     progress = Progress(TextColumn("[bold]progress[/bold]"), BarColumn(bar_width=None), TextColumn(step_text), expand=True)
     task = progress.add_task("agent", total=max_steps or 1, completed=step)
     progress.update(task, completed=step)
-    table.add_row(Text("DeepSeek Codex CLI", style="bold cyan"), Text(status, style="bold"))
+    table.add_row(Text("DeepSeek Codex CLI", style=f"bold {theme.accent}"), Text(status, style="bold"))
     table.add_row("", progress)
-    return Panel(table, border_style="cyan")
+    return Panel(table, border_style=theme.accent)
 
 
-def print_welcome(console: Console, cwd: Path, model: str, session_name: str | None) -> None:
+def print_welcome(console: Console, cwd: Path, model: str, session_name: str | None, theme: Theme) -> None:
     body = Table.grid(padding=(0, 1))
     body.add_column(style="bold")
     body.add_column()
     body.add_row("workspace", str(cwd))
     body.add_row("model", model)
     body.add_row("session", session_name or "none")
-    body.add_row("commands", "/exit, /clear, /help, /logs, /review, /status, /cancel, /compact, /expand")
-    console.print(Panel(body, title="DeepSeek CLI", border_style="cyan"))
+    body.add_row("theme", theme.name)
+    body.add_row("commands", "/sessions, /replay, /review, /logs, /clear, /help, /exit")
+    console.print(Panel(body, title="DeepSeek CLI", border_style=theme.accent))
 
 
-def print_help(console: Console) -> None:
+def print_help(console: Console, theme: Theme) -> None:
     console.print(
         Panel(
             "/exit or /quit: exit\n"
             "/clear: clear conversation\n"
+            "/sessions [query]: list or search saved sessions\n"
+            "/replay NAME: load a saved session into this conversation\n"
             "/logs: open full logs in a pager\n"
             "/review: show current git diff\n"
             "/status: show current task progress\n"
@@ -167,7 +174,7 @@ def print_help(console: Console) -> None:
             "/help: show help\n\n"
             "Fullscreen keys: F4 toggles compact/full logs, Tab changes focus, Ctrl+L clears panes, Ctrl+D exits.",
             title="help",
-            border_style="cyan",
+            border_style=theme.accent,
         )
     )
 
@@ -189,12 +196,13 @@ def make_prompt_session() -> PromptSession[str]:
 
 
 def show_logs(console: Console, events: RichAgentEvents) -> None:
+    theme = get_theme(events.theme_name)
     with console.pager(styles=True):
-        console.print(render_header(events.step, events.max_steps, events.current_status))
+        console.print(render_header(events.step, events.max_steps, events.current_status, theme))
         if events.streaming_reasoning:
-            console.print(Panel(events.streaming_reasoning, title="reasoning", border_style="magenta"))
+            console.print(Panel(events.streaming_reasoning, title="reasoning", border_style=theme.reasoning))
         if events.streaming_answer:
-            console.print(Panel(Markdown(events.streaming_answer), title="answer", border_style="green"))
+            console.print(Panel(Markdown(events.streaming_answer), title="answer", border_style=theme.success))
         for title, body in events.logs:
             console.print(Panel(body, title=title))
 
@@ -223,11 +231,12 @@ def run_rich_interactive(
     on_turn_done: Callable[[], None] | None = None,
     fullscreen: bool = False,
     compact: bool = True,
+    theme_name: str = "default",
 ) -> int:
     console = Console()
-    events = RichAgentEvents(console, compact=compact)
+    events = RichAgentEvents(console, compact=compact, theme_name=theme_name)
     agent.events = events
-    return _run_loop(console, events, agent, cwd, model, session_name, on_turn_done)
+    return _run_loop(console, events, agent, cwd, model, session_name, on_turn_done, get_theme(theme_name))
 
 
 def _run_loop(
@@ -238,9 +247,11 @@ def _run_loop(
     model: str,
     session_name: str | None,
     on_turn_done: Callable[[], None] | None,
+    theme: Theme,
 ) -> int:
-    print_welcome(console, cwd, model, session_name)
+    print_welcome(console, cwd, model, session_name, theme)
     prompt_session = make_prompt_session()
+    store = SessionStore.default()
 
     while True:
         try:
@@ -254,7 +265,31 @@ def _run_loop(
         if prompt in {"/exit", "/quit"}:
             return 0
         if prompt == "/help":
-            print_help(console)
+            print_help(console, theme)
+            continue
+        if prompt == "/sessions" or prompt.startswith("/sessions "):
+            query = prompt.removeprefix("/sessions").strip()
+            records = store.search(query)
+            table = Table(title="Saved sessions")
+            table.add_column("name")
+            table.add_column("updated")
+            table.add_column("preview")
+            for record in records:
+                table.add_row(record.name, str(record.updated_at), record.preview)
+            console.print(table if records else "No saved sessions found.")
+            continue
+        if prompt.startswith("/replay "):
+            name = prompt.removeprefix("/replay").strip()
+            try:
+                messages = store.load(name)
+            except SessionError as exc:
+                console.print(f"[{theme.error}]Error: {exc}[/{theme.error}]")
+                continue
+            if not messages:
+                console.print(f"[{theme.warning}]Session not found: {name}[/{theme.warning}]")
+                continue
+            agent.messages = messages
+            console.print(f"Loaded session: {name}")
             continue
         if prompt == "/logs":
             show_logs(console, events)
@@ -283,7 +318,7 @@ def _run_loop(
         answer = agent.run_turn(prompt)
         if on_turn_done:
             on_turn_done()
-        console.print(Panel(Markdown(answer or "Done."), title="final", border_style="green"))
+        console.print(Panel(Markdown(answer or "Done."), title="final", border_style=theme.success))
 
 
 class RichToolConfirmer:
@@ -478,19 +513,22 @@ def run_split_pane_interactive(
     on_turn_done: Callable[[], None] | None = None,
     layout_mode: str = "balanced",
     compact: bool = True,
+    theme_name: str = "default",
 ) -> int:
+    theme = get_theme(theme_name)
     events = SplitPaneAgentEvents(compact=compact)
     agent.events = events
     status = TextArea(text=f"DeepSeek Codex CLI | {cwd} | {model} | {session_name or 'no session'}", height=1, focusable=False)
     logs = TextArea(text="Compact output enabled. Use /expand or F4 for full logs.", scrollbar=True, focusable=True, wrap_lines=False)
     answer = TextArea(text="", scrollbar=True, focusable=True, wrap_lines=True)
     reasoning = TextArea(text="", scrollbar=True, focusable=True, wrap_lines=True)
-    activity = TextArea(text="Ready. Type a task, /status, /review, /expand, or /help.", scrollbar=True, focusable=True, wrap_lines=True)
+    activity = TextArea(text="Ready. Type a task, /sessions, /replay, /review, or /help.", scrollbar=True, focusable=True, wrap_lines=True)
     input_box = TextArea(height=3, prompt="DeepSeek> ", multiline=False)
     bindings = KeyBindings()
     state: dict[str, Any] = {"running": False, "cancel_requested": False, "last_prompt": "", "approval": None}
     lock = threading.Lock()
     agent.config.cancel_check = lambda: bool(state["cancel_requested"])
+    store = SessionStore.default()
 
     def request_decision(prompt: str, detail: str = "") -> bool:
         event = threading.Event()
@@ -643,7 +681,36 @@ def run_split_pane_interactive(
 
     def handle_split_command(prompt: str) -> bool:
         if prompt == "/help":
-            events._append_activity("commands: /status, /cancel, /review, /expand, /compact, /clear, /exit. Approval: y/n or /approve//reject.")
+            events._append_activity("commands: /sessions [query], /replay NAME, /status, /cancel, /review, /expand, /compact, /clear, /exit.")
+            events._invalidate()
+            return True
+        if prompt == "/sessions" or prompt.startswith("/sessions "):
+            query = prompt.removeprefix("/sessions").strip()
+            records = store.search(query)
+            logs.text = "\n".join(
+                f"{record.name} | {record.model or '?'} | {record.preview}" for record in records
+            ) or "No saved sessions found."
+            events._append_activity(f"session search: {query or '(all)'}")
+            events._invalidate()
+            return True
+        if prompt.startswith("/replay "):
+            if state["running"]:
+                events._append_activity("Cannot replay while a task is running. Use /cancel first.")
+                events._invalidate()
+                return True
+            name = prompt.removeprefix("/replay").strip()
+            try:
+                messages = store.load(name)
+            except SessionError as exc:
+                events._append_activity(f"session error: {exc}")
+                events._invalidate()
+                return True
+            if not messages:
+                events._append_activity(f"Session not found: {name}")
+                events._invalidate()
+                return True
+            agent.messages = messages
+            activity.text = f"Loaded session: {name}"
             events._invalidate()
             return True
         if prompt in {"/exit", "/quit"}:
@@ -708,7 +775,13 @@ def run_split_pane_interactive(
 
     input_box.buffer.accept_handler = submit
     body = build_split_layout(status, logs, reasoning, answer, activity, input_box, layout_mode)
-    app = Application(layout=Layout(body, focused_element=input_box), key_bindings=bindings, full_screen=True, mouse_support=True)
+    app = Application(
+        layout=Layout(body, focused_element=input_box),
+        key_bindings=bindings,
+        full_screen=True,
+        mouse_support=True,
+        style=theme.prompt_style,
+    )
     events.bind(app, status, logs, answer, reasoning, activity)
     return int(app.run() or 0)
 

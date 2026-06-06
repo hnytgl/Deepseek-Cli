@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+import time
 from pathlib import Path
 
 from . import __version__
@@ -9,6 +11,7 @@ from .agent import AgentConfig, DeepSeekAgent
 from .api import DEFAULT_MODEL, DeepSeekAPIError, DeepSeekClient
 from .policy import PermissionConfig, PermissionError as PolicyError, load_project_policy, save_project_policy
 from .session import SessionError, SessionStore
+from .theme import THEMES
 from .tools import ToolExecutor
 from .ui import (
     RichAgentEvents,
@@ -60,6 +63,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--show-policy", action="store_true", help="Print the effective permission policy and exit.")
     parser.add_argument("--session", default=None, help="Save and resume a named session.")
     parser.add_argument("--resume", action="store_true", help="Resume the latest or named session.")
+    parser.add_argument(
+        "--sessions",
+        nargs="?",
+        const="",
+        metavar="QUERY",
+        help="List saved sessions, optionally filtering by text, then exit.",
+    )
+    parser.add_argument("--replay-session", metavar="NAME", help="Print a saved session transcript and exit.")
     parser.add_argument("--no-stream", action="store_true", help="Disable streaming API responses.")
     parser.add_argument("--max-steps", type=positive_int, default=128, help="Maximum model/tool loop steps.")
     parser.add_argument(
@@ -71,6 +82,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--temperature", type=float, default=0.2, help="Sampling temperature.")
     parser.add_argument("--plain", action="store_true", help="Use plain input/output instead of the Rich TUI.")
     parser.add_argument("--fullscreen", action="store_true", help="Use an alternate full-screen terminal surface.")
+    parser.add_argument(
+        "--theme",
+        choices=sorted(THEMES),
+        default=os.getenv("DEEPSEEK_THEME", "default"),
+        help="TUI color theme. Can also be set with DEEPSEEK_THEME.",
+    )
     parser.add_argument(
         "--layout",
         choices=["balanced", "logs-right", "stacked"],
@@ -140,8 +157,20 @@ def create_agent(args: argparse.Namespace) -> DeepSeekAgent:
     )
 
 
+def format_sessions(store: SessionStore, query: str = "") -> str:
+    records = store.search(query)
+    if not records:
+        return "No saved sessions found."
+    rows = []
+    for record in records:
+        updated = time.strftime("%Y-%m-%d %H:%M", time.localtime(record.updated_at))
+        rows.append(f"{record.name}\t{updated}\t{len(record.messages)} messages\t{record.preview}")
+    return "\n".join(rows)
+
+
 def run_interactive(agent: DeepSeekAgent, *, session_name: str | None = None) -> int:
-    print("DeepSeek CLI. Type /exit to quit, /clear to reset the conversation.")
+    print("DeepSeek CLI. Type /help for commands.")
+    store = SessionStore.default()
     while True:
         try:
             prompt = input("\nDeepSeek> ").strip()
@@ -153,6 +182,25 @@ def run_interactive(agent: DeepSeekAgent, *, session_name: str | None = None) ->
             continue
         if prompt in {"/exit", "/quit"}:
             return 0
+        if prompt == "/help":
+            print("/sessions [query], /replay NAME, /clear, /exit")
+            continue
+        if prompt == "/sessions" or prompt.startswith("/sessions "):
+            print(format_sessions(store, prompt.removeprefix("/sessions").strip()))
+            continue
+        if prompt.startswith("/replay "):
+            name = prompt.removeprefix("/replay").strip()
+            try:
+                messages = store.load(name)
+            except SessionError as exc:
+                print(f"Error: {exc}", file=sys.stderr)
+                continue
+            if not messages:
+                print(f"Session not found: {name}", file=sys.stderr)
+                continue
+            agent.messages = messages
+            print(f"Loaded session: {name}")
+            continue
         if prompt == "/clear":
             agent.messages.clear()
             agent.__post_init__()
@@ -190,6 +238,17 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if report.ok else 1
     if args.self_update:
         return self_update(args.self_update)
+    store = SessionStore.default()
+    try:
+        if args.sessions is not None:
+            print(format_sessions(store, args.sessions))
+            return 0
+        if args.replay_session:
+            print(store.transcript(args.replay_session))
+            return 0
+    except SessionError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
     if args.show_policy:
         cwd = resolve_cwd(args.cwd)
         try:
@@ -220,7 +279,7 @@ def main(argv: list[str] | None = None) -> int:
             from rich.console import Console
 
             console = Console()
-            agent.events = RichAgentEvents(console)
+            agent.events = RichAgentEvents(console, theme_name=args.theme)
         try:
             answer = agent.run_turn(" ".join(args.prompt))
         except DeepSeekAPIError as exc:
@@ -241,6 +300,7 @@ def main(argv: list[str] | None = None) -> int:
             on_turn_done=lambda: save_session(agent, args.session),
             layout_mode=args.layout,
             compact=not args.expanded_output,
+            theme_name=args.theme,
         )
         save_session(agent, args.session)
         return code
@@ -251,6 +311,7 @@ def main(argv: list[str] | None = None) -> int:
         session_name=args.session,
         on_turn_done=lambda: save_session(agent, args.session),
         compact=not args.expanded_output,
+        theme_name=args.theme,
     )
     save_session(agent, args.session)
     return code
