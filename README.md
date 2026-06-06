@@ -1,5 +1,8 @@
 # DeepSeek Codex CLI
 
+[![CI](https://github.com/hnytgl/Deepseek-Cli/actions/workflows/ci.yml/badge.svg)](https://github.com/hnytgl/Deepseek-Cli/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 一个参考 Codex CLI 体验、完全适配 DeepSeek API 的命令行编程代理。它可以在终端里对话、读取和修改项目文件、运行命令、自动调用工具，并用窗口化界面展示任务过程、当前进度、工具日志和模型思考内容。
 
 ## 功能特性
@@ -434,3 +437,12 @@ python scripts/publish_registries.py --check-status --version 0.8.0
 ## 和 Codex CLI 看齐的方向
 
 这个项目当前已经具备 Codex CLI 风格的基础能力：split-pane 全屏 TUI、可选主题、紧凑输出、长内容折叠展开、多轮对话、会话搜索与任务回放、流式输出、自动工具调用、本地文件编辑、命令执行、hunk 级 diff 审批、内置行级 diff UI、Git/PR 工作流、权限沙箱、可滚动日志、多文件 review、命令 allow/deny 策略、项目策略、按需安装工具、跨平台安装检查、单文件二进制构建、SHA256 模板回填、release notes 生成、registry PR 自动创建和 registry 发布状态检查。
+
+## 支持与定制
+
+社区问题和功能建议请通过 GitHub Issues 提交。私有部署、模型或内部
+API 集成、权限策略定制、打包发布和约定响应时间的维护服务，请参阅
+[SUPPORT.md](SUPPORT.md)。
+
+安全问题请按照 [SECURITY.md](SECURITY.md) 私下报告，不要在公开 Issue
+中披露凭据或可直接复现的高风险细节。
