@@ -41,11 +41,20 @@ jobs:
         run: Compress-Archive -Path dist/${{ matrix.binary }} -DestinationPath ${{ matrix.artifact }}.zip
       - if: runner.os != 'Windows'
         run: zip -j ${{ matrix.artifact }}.zip dist/${{ matrix.binary }}
+      - name: Generate SHA256
+        run: >-
+          python -c "from pathlib import Path; import hashlib;
+          p=Path('${{ matrix.artifact }}.zip');
+          Path(str(p)+'.sha256').write_text(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.name+'\n',
+          encoding='utf-8')"
       - uses: softprops/action-gh-release@v2
         with:
-          files: ${{ matrix.artifact }}.zip
+          files: |
+            ${{ matrix.artifact }}.zip
+            ${{ matrix.artifact }}.zip.sha256
           generate_release_notes: true
   pypi:
+    if: vars.PUBLISH_PYPI == 'true'
     runs-on: ubuntu-latest
     environment: pypi
     steps:

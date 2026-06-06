@@ -400,7 +400,7 @@ deepseek --self-update "git+https://github.com/hnytgl/deepseek-cli.git"
 - Homebrew：`packaging/homebrew/deepseek-codex-cli.rb`。
 - Scoop：`packaging/scoop/deepseek-codex-cli.json`。
 - winget：`packaging/winget/*.yaml`。
-- 单文件二进制：release 时通过 PyInstaller 构建 `deepseek-windows-x64.zip`、`deepseek-macos-x64.zip`、`deepseek-linux-x64.zip`。
+- 单文件二进制：release 时通过 PyInstaller 构建 `deepseek-windows-x64.zip`、`deepseek-macos-x64.zip`、`deepseek-linux-x64.zip`，并为每个压缩包附带 `.sha256` 校验文件。
 
 真正发布到这些生态需要对应账号、release 产物和 SHA256 校验值。当前模板中带有 `REPLACE_WITH_*_SHA256` 占位符，发布 release 后替换即可提交到对应 registry。
 
