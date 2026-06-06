@@ -59,7 +59,7 @@ def test_format_sessions_includes_preview(tmp_path: Path) -> None:
         "demo",
         [{"role": "user", "content": "Workspace: x\n\nfix the parser"}],
         cwd=tmp_path,
-        model="deepseek-chat",
+        model="deepseek-v4-flash",
     )
 
     output = format_sessions(store, "parser")
