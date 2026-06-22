@@ -34,6 +34,13 @@ dev = [
   "build>=1.2",
   "pytest>=8.0",
 ]
+db-audit = [
+  "oracledb>=2.4",
+  "psycopg[binary]>=3.2",
+  "pymssql>=2.3",
+  "pymysql>=1.1",
+  "redis>=5.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/hnytgl/deepseek-cli"
@@ -43,6 +50,7 @@ Issues = "https://github.com/hnytgl/deepseek-cli/issues"
 [project.scripts]
 deepseek = "deepseek_cli.cli:main"
 deepseek-cli = "deepseek_cli.cli:main"
+dbweakcheck = "deepseek_cli.dbweakcheck:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/deepseek_cli"]
