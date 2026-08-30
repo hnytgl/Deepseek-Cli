@@ -3,14 +3,10 @@ package com.sproutspeak.kids;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
-import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.media.MediaRecorder;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
-import android.os.SystemClock;
-import android.speech.RecognizerIntent;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
 import android.webkit.JavascriptInterface;
@@ -21,32 +17,35 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.Locale;
 
 public class MainActivity extends Activity {
     private static final int REQ_MIC = 1002;
-    private static final int REQ_SPEECH = 1003;
     private static final String MODEL = "deepseek-v4-flash";
+    private static final String ASR_MODEL = "FunAudioLLM/SenseVoiceSmall";
     private static final String PREFS = "sproutspeak_local";
-    private static final String KEY_NAME = "deepseek_api_key";
-    private static final long MIC_DEBOUNCE_MS = 1200L;
+    private static final String KEY_DEEPSEEK = "deepseek_api_key";
+    private static final String KEY_SPEECH = "siliconflow_speech_key";
 
     private WebView webView;
-    private TextToSpeech tts;
     private SharedPreferences prefs;
-    private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    private String speechTarget = "chat";
-    private boolean pendingSpeech = false;
-    private boolean speechInFlight = false;
+    private TextToSpeech tts;
     private boolean ttsReady = false;
-    private long lastMicLaunchAt = 0L;
+
+    private MediaRecorder recorder;
+    private File recordingFile;
+    private boolean recording = false;
+    private boolean pendingRecord = false;
+    private String speechTarget = "chat";
+    private long recordStartedAt = 0L;
 
     @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
     @Override public void onCreate(Bundle state) {
@@ -84,76 +83,56 @@ public class MainActivity extends Activity {
                 });
             } else {
                 ttsReady = false;
-                js("window.onNativeTtsError && window.onNativeTtsError('系统英语朗读初始化失败');");
+                js("window.onNativeTtsError && window.onNativeTtsError('系统英语朗读不可用，但仍可使用文字对话');");
             }
         });
     }
 
-    private boolean speechActivityAvailable() {
-        try {
-            Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
-            return i.resolveActivity(getPackageManager()) != null;
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
-    private void launchSpeechOnce() {
-        if (speechInFlight) {
-            js("window.onNativeSpeechError && window.onNativeSpeechError('正在听上一句，请先完成这次回答');");
-            return;
-        }
-        if (!speechActivityAvailable()) {
-            js("window.onNativeSpeechError && window.onNativeSpeechError('当前平板没有可用的系统英语语音输入服务');");
-            return;
-        }
-
-        long now = SystemClock.elapsedRealtime();
-        long wait = MIC_DEBOUNCE_MS - (now - lastMicLaunchAt);
-        if (wait > 0) {
-            js("window.onNativeSpeechState && window.onNativeSpeechState('processing');");
-            mainHandler.postDelayed(this::launchSpeechOnce, wait);
-            return;
-        }
-
-        try {
-            if (tts != null) tts.stop();
-            Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
-            i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
-            i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US");
-            i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "en-US");
-            i.putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak English");
-            i.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3);
-            i.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false);
-            speechInFlight = true;
-            lastMicLaunchAt = now;
-            js("window.onNativeSpeechState && window.onNativeSpeechState('ready');");
-            startActivityForResult(i, REQ_SPEECH);
-        } catch (Exception e) {
-            speechInFlight = false;
-            js("window.onNativeSpeechError && window.onNativeSpeechError(" + JSONObject.quote("语音输入启动失败：" + e.getMessage()) + ");");
-        }
-    }
-
     public class AppBridge {
+        @JavascriptInterface public String saveApiKey(String key) {
+            if (key == null) return "DeepSeek API Key 为空";
+            String clean = key.replaceAll("\\s+", "").trim();
+            if (clean.length() < 20) return "DeepSeek API Key 看起来不完整";
+            prefs.edit().putString(KEY_DEEPSEEK, clean).apply();
+            return "OK";
+        }
+
+        @JavascriptInterface public boolean hasApiKey() {
+            return !prefs.getString(KEY_DEEPSEEK, "").trim().isEmpty();
+        }
+
+        @JavascriptInterface public String saveSpeechApiKey(String key) {
+            if (key == null) return "语音 API Key 为空";
+            String clean = key.replaceAll("\\s+", "").trim();
+            if (clean.length() < 20) return "语音 API Key 看起来不完整";
+            prefs.edit().putString(KEY_SPEECH, clean).apply();
+            return "OK";
+        }
+
+        @JavascriptInterface public boolean hasSpeechApiKey() {
+            return !prefs.getString(KEY_SPEECH, "").trim().isEmpty();
+        }
+
+        @JavascriptInterface public void clearSpeechApiKey() {
+            prefs.edit().remove(KEY_SPEECH).apply();
+        }
+
+        @JavascriptInterface public String modelName() { return MODEL; }
+        @JavascriptInterface public String speechModelName() { return ASR_MODEL; }
+        @JavascriptInterface public boolean speechAvailable() { return true; }
+        @JavascriptInterface public boolean ttsAvailable() { return ttsReady; }
+
         @JavascriptInterface public void startSpeech(String target) {
-            runOnUiThread(() -> {
-                speechTarget = target == null ? "chat" : target;
-                if (android.os.Build.VERSION.SDK_INT >= 23 && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-                    pendingSpeech = true;
-                    requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQ_MIC);
-                } else {
-                    launchSpeechOnce();
-                }
-            });
+            runOnUiThread(() -> requestStartRecording(target));
         }
 
         @JavascriptInterface public void stopSpeech() {
-            // 单次系统语音输入模式不做强制中断，避免制造 RecognitionService busy。
+            runOnUiThread(() -> stopRecordingAndTranscribe());
         }
 
         @JavascriptInterface public void speak(String text) {
             runOnUiThread(() -> {
+                if (recording) cancelRecording();
                 if (tts != null && ttsReady && text != null && !text.trim().isEmpty()) {
                     tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "sproutspeak_turn");
                 } else {
@@ -162,64 +141,169 @@ public class MainActivity extends Activity {
             });
         }
 
-        @JavascriptInterface public String saveApiKey(String key) {
-            if (key == null) return "API Key 为空";
-            String clean = key.replaceAll("\\s+", "").trim();
-            if (clean.length() < 20) return "API Key 看起来不完整，请重新复制粘贴";
-            prefs.edit().putString(KEY_NAME, clean).apply();
-            return "OK";
+        @JavascriptInterface public void chat(String messagesJson, String requestId) {
+            new Thread(() -> doDeepSeek(messagesJson, requestId)).start();
         }
+    }
 
-        @JavascriptInterface public boolean hasApiKey() {
-            return !prefs.getString(KEY_NAME, "").trim().isEmpty();
+    private void requestStartRecording(String target) {
+        speechTarget = target == null ? "chat" : target;
+        if (recording) return;
+        if (android.os.Build.VERSION.SDK_INT >= 23 && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            pendingRecord = true;
+            requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQ_MIC);
+            return;
         }
+        beginRecording();
+    }
 
-        @JavascriptInterface public void clearApiKey() {
-            prefs.edit().remove(KEY_NAME).apply();
+    private void beginRecording() {
+        try {
+            if (tts != null) tts.stop();
+            cancelRecording();
+            recordingFile = new File(getCacheDir(), "sproutspeak_" + System.currentTimeMillis() + ".m4a");
+            recorder = new MediaRecorder();
+            recorder.setAudioSource(MediaRecorder.AudioSource.MIC);
+            recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
+            recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
+            recorder.setAudioEncodingBitRate(64000);
+            recorder.setAudioSamplingRate(16000);
+            recorder.setOutputFile(recordingFile.getAbsolutePath());
+            recorder.prepare();
+            recorder.start();
+            recordStartedAt = System.currentTimeMillis();
+            recording = true;
+            js("window.onNativeSpeechState && window.onNativeSpeechState('recording');");
+        } catch (Exception e) {
+            recording = false;
+            safeReleaseRecorder();
+            js("window.onNativeSpeechError && window.onNativeSpeechError(" + JSONObject.quote("无法开始录音：" + safeMessage(e)) + ");");
         }
+    }
 
-        @JavascriptInterface public String modelName() { return MODEL; }
-        @JavascriptInterface public boolean speechAvailable() { return speechActivityAvailable(); }
-        @JavascriptInterface public boolean ttsAvailable() { return ttsReady; }
-        @JavascriptInterface public void chat(String messagesJson, String requestId) { new Thread(() -> doDeepSeek(messagesJson, requestId)).start(); }
+    private void stopRecordingAndTranscribe() {
+        if (!recording || recorder == null) return;
+        long duration = System.currentTimeMillis() - recordStartedAt;
+        File file = recordingFile;
+        try {
+            recorder.stop();
+        } catch (RuntimeException e) {
+            safeReleaseRecorder();
+            recording = false;
+            if (file != null) file.delete();
+            js("window.onNativeSpeechError && window.onNativeSpeechError('录音太短，请按住麦克风说完一句再松开');");
+            return;
+        }
+        safeReleaseRecorder();
+        recording = false;
+        if (duration < 500 || file == null || !file.exists() || file.length() < 1000) {
+            if (file != null) file.delete();
+            js("window.onNativeSpeechError && window.onNativeSpeechError('录音太短，请至少说半秒以上');");
+            return;
+        }
+        js("window.onNativeSpeechState && window.onNativeSpeechState('processing');");
+        final String target = speechTarget;
+        new Thread(() -> transcribeFile(file, target)).start();
+    }
+
+    private void cancelRecording() {
+        if (recorder != null) {
+            try { recorder.stop(); } catch (Exception ignored) {}
+            safeReleaseRecorder();
+        }
+        recording = false;
+        if (recordingFile != null && recordingFile.exists()) recordingFile.delete();
+        recordingFile = null;
+    }
+
+    private void safeReleaseRecorder() {
+        if (recorder != null) {
+            try { recorder.reset(); } catch (Exception ignored) {}
+            try { recorder.release(); } catch (Exception ignored) {}
+            recorder = null;
+        }
+    }
+
+    private void transcribeFile(File file, String target) {
+        HttpURLConnection conn = null;
+        try {
+            String speechKey = prefs.getString(KEY_SPEECH, "").trim();
+            if (speechKey.isEmpty()) throw new Exception("请先在设置中填写语音识别 API Key（硅基流动）");
+            String boundary = "----SproutSpeak" + System.currentTimeMillis();
+            URL url = new URL("https://api.siliconflow.cn/v1/audio/transcriptions");
+            conn = (HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(20000);
+            conn.setReadTimeout(60000);
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true);
+            conn.setRequestProperty("Authorization", "Bearer " + speechKey);
+            conn.setRequestProperty("Accept", "application/json");
+            conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
+
+            try (OutputStream os = conn.getOutputStream()) {
+                writeTextPart(os, boundary, "model", ASR_MODEL);
+                writeFilePart(os, boundary, "file", file, "audio/mp4");
+                os.write(("--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
+            }
+
+            int code = conn.getResponseCode();
+            InputStream in = code >= 200 && code < 300 ? conn.getInputStream() : conn.getErrorStream();
+            String raw = readAll(in);
+            if (code < 200 || code >= 300) {
+                String message = raw;
+                try {
+                    JSONObject j = new JSONObject(raw);
+                    message = j.optString("message", j.optString("data", raw));
+                } catch (Exception ignored) {}
+                throw new Exception("语音识别失败 " + code + "：" + message);
+            }
+            String text = new JSONObject(raw).optString("text", "").trim();
+            if (text.isEmpty()) throw new Exception("没有识别到英语内容，请再说一次");
+            js("window.onNativeSpeech && window.onNativeSpeech(" + JSONObject.quote(target) + "," + JSONObject.quote(text) + ",-1);");
+        } catch (Exception e) {
+            js("window.onNativeSpeechError && window.onNativeSpeechError(" + JSONObject.quote(safeMessage(e)) + ");");
+        } finally {
+            if (conn != null) conn.disconnect();
+            if (file != null) file.delete();
+        }
+    }
+
+    private void writeTextPart(OutputStream os, String boundary, String name, String value) throws Exception {
+        String part = "--" + boundary + "\r\n" +
+                "Content-Disposition: form-data; name=\"" + name + "\"\r\n\r\n" +
+                value + "\r\n";
+        os.write(part.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private void writeFilePart(OutputStream os, String boundary, String name, File file, String contentType) throws Exception {
+        String head = "--" + boundary + "\r\n" +
+                "Content-Disposition: form-data; name=\"" + name + "\"; filename=\"speech.m4a\"\r\n" +
+                "Content-Type: " + contentType + "\r\n\r\n";
+        os.write(head.getBytes(StandardCharsets.UTF_8));
+        try (FileInputStream fis = new FileInputStream(file)) {
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = fis.read(buf)) != -1) os.write(buf, 0, n);
+        }
+        os.write("\r\n".getBytes(StandardCharsets.UTF_8));
     }
 
     @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == REQ_MIC) {
-            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED && pendingSpeech) {
-                launchSpeechOnce();
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED && pendingRecord) {
+                beginRecording();
             } else {
                 js("window.onNativeSpeechError && window.onNativeSpeechError('需要麦克风权限才能进行口语练习');");
             }
-            pendingSpeech = false;
-        }
-    }
-
-    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == REQ_SPEECH) {
-            speechInFlight = false;
-            if (resultCode == RESULT_OK && data != null) {
-                ArrayList<String> rs = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
-                float[] cs = data.getFloatArrayExtra(RecognizerIntent.EXTRA_CONFIDENCE_SCORES);
-                String text = rs != null && !rs.isEmpty() ? rs.get(0) : "";
-                double confidence = cs != null && cs.length > 0 ? cs[0] : -1;
-                if (text == null || text.trim().isEmpty()) {
-                    js("window.onNativeSpeechError && window.onNativeSpeechError('没有识别到回答，请再试一次');");
-                } else {
-                    js("window.onNativeSpeech && window.onNativeSpeech(" + JSONObject.quote(speechTarget) + "," + JSONObject.quote(text.trim()) + "," + confidence + ");");
-                }
-            } else {
-                js("window.onNativeSpeechError && window.onNativeSpeechError('这次没有收到语音结果，请再按一次麦克风');");
-            }
+            pendingRecord = false;
         }
     }
 
     private void doDeepSeek(String messagesJson, String requestId) {
         HttpURLConnection conn = null;
         try {
-            String apiKey = prefs.getString(KEY_NAME, "").trim();
+            String apiKey = prefs.getString(KEY_DEEPSEEK, "").trim();
             if (apiKey.isEmpty()) throw new Exception("请先在设置中保存 DeepSeek API Key");
             JSONObject body = new JSONObject();
             body.put("model", MODEL);
@@ -253,7 +337,7 @@ public class MainActivity extends Activity {
             String content = data.getJSONArray("choices").getJSONObject(0).getJSONObject("message").optString("content", "");
             callbackChat(requestId, true, content);
         } catch (Exception e) {
-            callbackChat(requestId, false, e.getMessage() == null ? "请求失败" : e.getMessage());
+            callbackChat(requestId, false, safeMessage(e));
         } finally {
             if (conn != null) conn.disconnect();
         }
@@ -268,6 +352,10 @@ public class MainActivity extends Activity {
         return sb.toString();
     }
 
+    private String safeMessage(Exception e) {
+        return e.getMessage() == null || e.getMessage().trim().isEmpty() ? "操作失败" : e.getMessage();
+    }
+
     private void callbackChat(String id, boolean ok, String value) {
         js("window.onAndroidChat && window.onAndroidChat(" + JSONObject.quote(id == null ? "" : id) + "," + ok + "," + JSONObject.quote(value == null ? "" : value) + ");");
     }
@@ -278,8 +366,13 @@ public class MainActivity extends Activity {
         });
     }
 
+    @Override public void onBackPressed() {
+        if (webView != null && webView.canGoBack()) webView.goBack();
+        else super.onBackPressed();
+    }
+
     @Override protected void onDestroy() {
-        mainHandler.removeCallbacksAndMessages(null);
+        cancelRecording();
         if (tts != null) { tts.stop(); tts.shutdown(); }
         if (webView != null) webView.destroy();
         super.onDestroy();
