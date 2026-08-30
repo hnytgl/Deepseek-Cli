@@ -14,7 +14,7 @@ permissions:
 jobs:
   build-apk:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -29,13 +29,25 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
+      - name: Bundle offline English speech model
+        run: |
+          set -e
+          mkdir -p sproutspeak-android/app/src/main/assets
+          curl -L --retry 3 --fail -o /tmp/vosk-en.zip https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
+          echo '30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498  /tmp/vosk-en.zip' | sha256sum -c -
+          rm -rf /tmp/vosk-model sproutspeak-android/app/src/main/assets/model-en-us
+          mkdir -p /tmp/vosk-model
+          unzip -q /tmp/vosk-en.zip -d /tmp/vosk-model
+          mv /tmp/vosk-model/vosk-model-small-en-us-0.15 sproutspeak-android/app/src/main/assets/model-en-us
+          printf '%s\n' "$(cat /proc/sys/kernel/random/uuid)" > sproutspeak-android/app/src/main/assets/model-en-us/uuid
+          test -f sproutspeak-android/app/src/main/assets/model-en-us/am/final.mdl
       - name: Build debug APK
         working-directory: sproutspeak-android
         run: gradle :app:assembleDebug --stacktrace
       - name: Rename APK
-        run: cp sproutspeak-android/app/build/outputs/apk/debug/app-debug.apk SproutSpeak-Tablet-v1.0.0.apk
+        run: cp sproutspeak-android/app/build/outputs/apk/debug/app-debug.apk SproutSpeak-VideoCall-v1.5.0.apk
       - uses: actions/upload-artifact@v4
         with:
           name: SproutSpeak-Android-APK
-          path: SproutSpeak-Tablet-v1.0.0.apk
+          path: SproutSpeak-VideoCall-v1.5.0.apk
           if-no-files-found: error
