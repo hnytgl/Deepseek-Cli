@@ -6,6 +6,8 @@ import android.app.Activity;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
 import android.webkit.JavascriptInterface;
@@ -35,6 +37,8 @@ public class MainActivity extends Activity implements RecognitionListener {
     private static final String MODEL = "deepseek-v4-flash";
     private static final String PREFS = "sproutspeak_local";
     private static final String KEY_NAME = "deepseek_api_key";
+    private static final int MAX_SPEECH_MS = 12000;
+    private static final long SILENCE_FINISH_MS = 1350L;
 
     private WebView webView;
     private SharedPreferences prefs;
@@ -46,8 +50,13 @@ public class MainActivity extends Activity implements RecognitionListener {
     private boolean modelReady = false;
     private boolean speechActive = false;
     private boolean pendingSpeech = false;
+    private boolean heardSpeech = false;
     private String speechTarget = "chat";
     private String lastPartial = "";
+    private final Handler silenceHandler = new Handler(Looper.getMainLooper());
+    private final Runnable silenceFinish = () -> {
+        if (speechActive && heardSpeech) stopOfflineListening();
+    };
 
     @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
     @Override public void onCreate(Bundle state) {
@@ -184,12 +193,14 @@ public class MainActivity extends Activity implements RecognitionListener {
         try {
             if (tts != null) tts.stop();
             releaseSpeechService();
+            silenceHandler.removeCallbacks(silenceFinish);
             lastPartial = "";
+            heardSpeech = false;
             Recognizer recognizer = new Recognizer(voskModel, 16000.0f);
             speechService = new SpeechService(recognizer, 16000.0f);
             speechActive = true;
             js("window.onNativeSpeechState && window.onNativeSpeechState('ready');");
-            speechService.startListening(this);
+            speechService.startListening(this, MAX_SPEECH_MS);
         } catch (IOException e) {
             speechActive = false;
             releaseSpeechService();
@@ -197,15 +208,21 @@ public class MainActivity extends Activity implements RecognitionListener {
         }
     }
 
+    private void scheduleSilenceFinish() {
+        silenceHandler.removeCallbacks(silenceFinish);
+        silenceHandler.postDelayed(silenceFinish, SILENCE_FINISH_MS);
+    }
+
     private void stopOfflineListening() {
         if (!speechActive || speechService == null) return;
         speechActive = false;
+        silenceHandler.removeCallbacks(silenceFinish);
         js("window.onNativeSpeechState && window.onNativeSpeechState('processing');");
         try { speechService.stop(); } catch (Exception ignored) {}
-        // onFinalResult is posted by SpeechService after stop(). Keep the service alive until callback.
     }
 
     private void cancelOfflineListening() {
+        silenceHandler.removeCallbacks(silenceFinish);
         speechActive = false;
         if (speechService != null) {
             try { speechService.cancel(); } catch (Exception ignored) {}
@@ -227,23 +244,31 @@ public class MainActivity extends Activity implements RecognitionListener {
 
     @Override public void onPartialResult(String hypothesis) {
         String text = extractField(hypothesis, "partial");
-        if (!text.isEmpty()) lastPartial = text;
+        if (!text.isEmpty() && !text.equals(lastPartial)) {
+            lastPartial = text;
+            heardSpeech = true;
+            scheduleSilenceFinish();
+        }
         js("window.onNativeSpeechPartial && window.onNativeSpeechPartial(" + JSONObject.quote(speechTarget) + "," + JSONObject.quote(text) + ");");
     }
 
     @Override public void onResult(String hypothesis) {
         String text = extractField(hypothesis, "text");
-        if (!text.isEmpty()) lastPartial = text;
         if (!text.isEmpty()) {
+            lastPartial = text;
+            heardSpeech = true;
+            scheduleSilenceFinish();
             js("window.onNativeSpeechPartial && window.onNativeSpeechPartial(" + JSONObject.quote(speechTarget) + "," + JSONObject.quote(text) + ");");
         }
     }
 
     @Override public void onFinalResult(String hypothesis) {
+        silenceHandler.removeCallbacks(silenceFinish);
         speechActive = false;
         String text = extractField(hypothesis, "text");
         if (text.isEmpty()) text = lastPartial;
         lastPartial = "";
+        heardSpeech = false;
         releaseSpeechService();
         if (text == null || text.trim().isEmpty()) {
             js("window.onNativeSpeechError && window.onNativeSpeechError('没有听清，请再说一次');");
@@ -253,19 +278,24 @@ public class MainActivity extends Activity implements RecognitionListener {
     }
 
     @Override public void onError(Exception exception) {
+        silenceHandler.removeCallbacks(silenceFinish);
         speechActive = false;
+        heardSpeech = false;
         releaseSpeechService();
         js("window.onNativeSpeechError && window.onNativeSpeechError(" + JSONObject.quote("离线语音识别失败：" + safeMessage(exception)) + ");");
     }
 
     @Override public void onTimeout() {
+        silenceHandler.removeCallbacks(silenceFinish);
         speechActive = false;
         releaseSpeechService();
         if (!lastPartial.trim().isEmpty()) {
             String text = lastPartial.trim();
             lastPartial = "";
+            heardSpeech = false;
             js("window.onNativeSpeech && window.onNativeSpeech(" + JSONObject.quote(speechTarget) + "," + JSONObject.quote(text) + ",-1);");
         } else {
+            heardSpeech = false;
             js("window.onNativeSpeechError && window.onNativeSpeechError('没有检测到说话声音');");
         }
     }
@@ -357,6 +387,7 @@ public class MainActivity extends Activity implements RecognitionListener {
     }
 
     @Override protected void onDestroy() {
+        silenceHandler.removeCallbacksAndMessages(null);
         cancelOfflineListening();
         if (voskModel != null) {
             try { voskModel.close(); } catch (Exception ignored) {}
