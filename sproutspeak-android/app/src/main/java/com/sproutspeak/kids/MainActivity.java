@@ -3,11 +3,14 @@ package com.sproutspeak.kids;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
-import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
+import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
+import android.speech.SpeechRecognizer;
 import android.speech.tts.TextToSpeech;
+import android.speech.tts.UtteranceProgressListener;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -26,16 +29,24 @@ import java.util.ArrayList;
 import java.util.Locale;
 
 public class MainActivity extends Activity {
-    private static final int REQ_SPEECH = 1001;
     private static final int REQ_MIC = 1002;
+    private static final String MODEL = "deepseek-v4-flash";
+    private static final String PREFS = "sproutspeak_local";
+    private static final String KEY_NAME = "deepseek_api_key";
+
     private WebView webView;
     private TextToSpeech tts;
+    private SpeechRecognizer speechRecognizer;
+    private SharedPreferences prefs;
     private String speechTarget = "chat";
     private boolean pendingSpeech = false;
+    private boolean speechActive = false;
 
     @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+
         webView = new WebView(this);
         setContentView(webView);
         webView.getSettings().setJavaScriptEnabled(true);
@@ -44,14 +55,71 @@ public class MainActivity extends Activity {
         webView.getSettings().setMediaPlaybackRequiresUserGesture(false);
         webView.setWebViewClient(new WebViewClient());
         webView.addJavascriptInterface(new AppBridge(), "AndroidBridge");
+
+        initTts();
+        initSpeechRecognizer();
+        webView.loadUrl("file:///android_asset/index.html");
+    }
+
+    private void initTts() {
         tts = new TextToSpeech(this, status -> {
             if (status == TextToSpeech.SUCCESS) {
                 tts.setLanguage(Locale.US);
-                tts.setSpeechRate(0.82f);
-                tts.setPitch(1.05f);
+                tts.setSpeechRate(0.84f);
+                tts.setPitch(1.03f);
+                tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+                    @Override public void onStart(String utteranceId) {
+                        js("window.onNativeTtsStart && window.onNativeTtsStart();");
+                    }
+                    @Override public void onDone(String utteranceId) {
+                        js("window.onNativeTtsDone && window.onNativeTtsDone();");
+                    }
+                    @Override public void onError(String utteranceId) {
+                        js("window.onNativeTtsDone && window.onNativeTtsDone();");
+                    }
+                });
             }
         });
-        webView.loadUrl("file:///android_asset/index.html");
+    }
+
+    private void initSpeechRecognizer() {
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) return;
+        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this);
+        speechRecognizer.setRecognitionListener(new RecognitionListener() {
+            @Override public void onReadyForSpeech(Bundle params) {
+                speechActive = true;
+                js("window.onNativeSpeechState && window.onNativeSpeechState('ready');");
+            }
+            @Override public void onBeginningOfSpeech() {
+                js("window.onNativeSpeechState && window.onNativeSpeechState('speaking');");
+            }
+            @Override public void onRmsChanged(float rmsdB) {
+                js("window.onNativeVoiceLevel && window.onNativeVoiceLevel(" + rmsdB + ");");
+            }
+            @Override public void onBufferReceived(byte[] buffer) {}
+            @Override public void onEndOfSpeech() {
+                js("window.onNativeSpeechState && window.onNativeSpeechState('processing');");
+            }
+            @Override public void onError(int error) {
+                speechActive = false;
+                String msg = speechError(error);
+                js("window.onNativeSpeechError && window.onNativeSpeechError(" + JSONObject.quote(msg) + ");");
+            }
+            @Override public void onResults(Bundle results) {
+                speechActive = false;
+                ArrayList<String> list = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+                float[] conf = results.getFloatArray(SpeechRecognizer.CONFIDENCE_SCORES);
+                String text = list != null && !list.isEmpty() ? list.get(0) : "";
+                double confidence = conf != null && conf.length > 0 ? conf[0] : -1;
+                js("window.onNativeSpeech && window.onNativeSpeech(" + JSONObject.quote(speechTarget) + "," + JSONObject.quote(text) + "," + confidence + ");");
+            }
+            @Override public void onPartialResults(Bundle partialResults) {
+                ArrayList<String> list = partialResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+                String text = list != null && !list.isEmpty() ? list.get(0) : "";
+                js("window.onNativeSpeechPartial && window.onNativeSpeechPartial(" + JSONObject.quote(speechTarget) + "," + JSONObject.quote(text) + ");");
+            }
+            @Override public void onEvent(int eventType, Bundle params) {}
+        });
     }
 
     public class AppBridge {
@@ -61,18 +129,54 @@ public class MainActivity extends Activity {
                 if (android.os.Build.VERSION.SDK_INT >= 23 && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                     pendingSpeech = true;
                     requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQ_MIC);
-                } else launchSpeech();
+                } else {
+                    startListeningInternal();
+                }
+            });
+        }
+
+        @JavascriptInterface public void stopSpeech() {
+            runOnUiThread(() -> {
+                if (speechRecognizer != null && speechActive) {
+                    try { speechRecognizer.stopListening(); } catch (Exception ignored) {}
+                }
             });
         }
 
         @JavascriptInterface public void speak(String text) {
             runOnUiThread(() -> {
-                if (tts != null && text != null) tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "sprout");
+                if (tts != null && text != null && !text.trim().isEmpty()) {
+                    if (speechRecognizer != null && speechActive) {
+                        try { speechRecognizer.cancel(); } catch (Exception ignored) {}
+                        speechActive = false;
+                    }
+                    tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "sproutspeak_turn");
+                }
             });
         }
 
-        @JavascriptInterface public void chat(String apiKey, String model, String messagesJson, String requestId) {
-            new Thread(() -> doDeepSeek(apiKey, model, messagesJson, requestId)).start();
+        @JavascriptInterface public String saveApiKey(String key) {
+            if (key == null) return "API Key 为空";
+            String clean = key.trim().replace(" ", "");
+            if (clean.length() < 16) return "API Key 长度不正确，请检查是否完整粘贴";
+            prefs.edit().putString(KEY_NAME, clean).apply();
+            return "OK";
+        }
+
+        @JavascriptInterface public boolean hasApiKey() {
+            return !prefs.getString(KEY_NAME, "").trim().isEmpty();
+        }
+
+        @JavascriptInterface public void clearApiKey() {
+            prefs.edit().remove(KEY_NAME).apply();
+        }
+
+        @JavascriptInterface public String modelName() {
+            return MODEL;
+        }
+
+        @JavascriptInterface public void chat(String messagesJson, String requestId) {
+            new Thread(() -> doDeepSeek(messagesJson, requestId)).start();
         }
 
         @JavascriptInterface public String deviceInfo() {
@@ -80,50 +184,65 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void launchSpeech() {
+    private void startListeningInternal() {
+        if (speechRecognizer == null) {
+            js("window.onNativeSpeechError && window.onNativeSpeechError('当前设备没有可用的系统语音识别服务');");
+            return;
+        }
         try {
-            Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
-            i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
-            i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US");
-            i.putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak English");
-            i.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
-            startActivityForResult(i, REQ_SPEECH);
+            if (tts != null) tts.stop();
+            speechRecognizer.cancel();
+            android.content.Intent intent = new android.content.Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US");
+            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "en-US");
+            intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
+            intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3);
+            intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 500L);
+            intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 900L);
+            intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 650L);
+            speechRecognizer.startListening(intent);
         } catch (Exception e) {
-            js("window.onNativeSpeechError && window.onNativeSpeechError(" + JSONObject.quote("当前设备没有可用的语音识别服务") + ");");
+            speechActive = false;
+            js("window.onNativeSpeechError && window.onNativeSpeechError(" + JSONObject.quote("启动语音识别失败：" + e.getMessage()) + ");");
+        }
+    }
+
+    private String speechError(int error) {
+        switch (error) {
+            case SpeechRecognizer.ERROR_AUDIO: return "录音出现问题，请检查麦克风";
+            case SpeechRecognizer.ERROR_CLIENT: return "语音识别已停止";
+            case SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS: return "没有麦克风权限";
+            case SpeechRecognizer.ERROR_NETWORK:
+            case SpeechRecognizer.ERROR_NETWORK_TIMEOUT: return "系统语音识别网络异常，请重试";
+            case SpeechRecognizer.ERROR_NO_MATCH: return "没有听清，请再说一次";
+            case SpeechRecognizer.ERROR_RECOGNIZER_BUSY: return "语音识别正忙，请稍后再试";
+            case SpeechRecognizer.ERROR_SERVER: return "系统语音识别服务暂时不可用";
+            case SpeechRecognizer.ERROR_SPEECH_TIMEOUT: return "没有检测到说话声音";
+            default: return "语音识别失败（" + error + "）";
         }
     }
 
     @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == REQ_MIC) {
-            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED && pendingSpeech) launchSpeech();
-            else js("window.onNativeSpeechError && window.onNativeSpeechError('需要麦克风权限才能语音练习');");
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED && pendingSpeech) {
+                startListeningInternal();
+            } else {
+                js("window.onNativeSpeechError && window.onNativeSpeechError('需要麦克风权限才能进行口语练习');");
+            }
             pendingSpeech = false;
         }
     }
 
-    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == REQ_SPEECH) {
-            if (resultCode == RESULT_OK && data != null) {
-                ArrayList<String> rs = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
-                float[] cs = data.getFloatArrayExtra(RecognizerIntent.EXTRA_CONFIDENCE_SCORES);
-                String text = rs != null && !rs.isEmpty() ? rs.get(0) : "";
-                double confidence = cs != null && cs.length > 0 ? cs[0] : -1;
-                js("window.onNativeSpeech && window.onNativeSpeech(" + JSONObject.quote(speechTarget) + "," + JSONObject.quote(text) + "," + confidence + ");");
-            } else {
-                js("window.onNativeSpeechError && window.onNativeSpeechError('未识别到有效语音');");
-            }
-        }
-    }
-
-    private void doDeepSeek(String apiKey, String model, String messagesJson, String requestId) {
+    private void doDeepSeek(String messagesJson, String requestId) {
         HttpURLConnection conn = null;
         try {
-            if (apiKey == null || apiKey.trim().isEmpty()) throw new Exception("请先在设置中填写 DeepSeek API Key");
-            String useModel = (model == null || model.trim().isEmpty()) ? "deepseek-chat" : model.trim();
+            String apiKey = prefs.getString(KEY_NAME, "").trim();
+            if (apiKey.isEmpty()) throw new Exception("请先在设置中保存 DeepSeek API Key");
+
             JSONObject body = new JSONObject();
-            body.put("model", useModel);
+            body.put("model", MODEL);
             body.put("messages", new JSONArray(messagesJson));
             body.put("stream", false);
             body.put("temperature", 0.7);
@@ -134,17 +253,22 @@ public class MainActivity extends Activity {
             conn.setReadTimeout(60000);
             conn.setRequestMethod("POST");
             conn.setDoOutput(true);
-            conn.setRequestProperty("Content-Type", "application/json");
-            conn.setRequestProperty("Authorization", "Bearer " + apiKey.trim());
+            conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+            conn.setRequestProperty("Accept", "application/json");
+            conn.setRequestProperty("Authorization", "Bearer " + apiKey);
             try (OutputStream os = conn.getOutputStream()) {
                 os.write(body.toString().getBytes(StandardCharsets.UTF_8));
             }
+
             int code = conn.getResponseCode();
             InputStream in = code >= 200 && code < 300 ? conn.getInputStream() : conn.getErrorStream();
             String raw = readAll(in);
             if (code < 200 || code >= 300) {
                 String msg = raw;
-                try { msg = new JSONObject(raw).optJSONObject("error").optString("message", raw); } catch (Exception ignored) {}
+                try {
+                    JSONObject err = new JSONObject(raw).optJSONObject("error");
+                    if (err != null) msg = err.optString("message", raw);
+                } catch (Exception ignored) {}
                 throw new Exception("DeepSeek API " + code + ": " + msg);
             }
             JSONObject data = new JSONObject(raw);
@@ -171,14 +295,21 @@ public class MainActivity extends Activity {
     }
 
     private void js(String script) {
-        runOnUiThread(() -> webView.evaluateJavascript(script, null));
+        runOnUiThread(() -> {
+            if (webView != null) webView.evaluateJavascript(script, null);
+        });
     }
 
     @Override public void onBackPressed() {
-        if (webView != null && webView.canGoBack()) webView.goBack(); else super.onBackPressed();
+        if (webView != null && webView.canGoBack()) webView.goBack();
+        else super.onBackPressed();
     }
 
     @Override protected void onDestroy() {
+        if (speechRecognizer != null) {
+            try { speechRecognizer.cancel(); } catch (Exception ignored) {}
+            speechRecognizer.destroy();
+        }
         if (tts != null) { tts.stop(); tts.shutdown(); }
         if (webView != null) webView.destroy();
         super.onDestroy();
