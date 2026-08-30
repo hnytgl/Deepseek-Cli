@@ -39,14 +39,15 @@ public class MainActivity extends Activity {
     private SpeechRecognizer speechRecognizer;
     private SharedPreferences prefs;
     private String speechTarget = "chat";
+    private String lastPartialText = "";
     private boolean pendingSpeech = false;
     private boolean speechActive = false;
+    private boolean ttsReady = false;
 
     @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
-
         webView = new WebView(this);
         setContentView(webView);
         webView.getSettings().setJavaScriptEnabled(true);
@@ -55,7 +56,6 @@ public class MainActivity extends Activity {
         webView.getSettings().setMediaPlaybackRequiresUserGesture(false);
         webView.setWebViewClient(new WebViewClient());
         webView.addJavascriptInterface(new AppBridge(), "AndroidBridge");
-
         initTts();
         initSpeechRecognizer();
         webView.loadUrl("file:///android_asset/index.html");
@@ -64,6 +64,7 @@ public class MainActivity extends Activity {
     private void initTts() {
         tts = new TextToSpeech(this, status -> {
             if (status == TextToSpeech.SUCCESS) {
+                ttsReady = true;
                 tts.setLanguage(Locale.US);
                 tts.setSpeechRate(0.84f);
                 tts.setPitch(1.03f);
@@ -78,48 +79,77 @@ public class MainActivity extends Activity {
                         js("window.onNativeTtsDone && window.onNativeTtsDone();");
                     }
                 });
+            } else {
+                ttsReady = false;
+                js("window.onNativeTtsError && window.onNativeTtsError('系统英语朗读初始化失败');");
             }
         });
     }
 
     private void initSpeechRecognizer() {
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) return;
-        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this);
-        speechRecognizer.setRecognitionListener(new RecognitionListener() {
-            @Override public void onReadyForSpeech(Bundle params) {
-                speechActive = true;
-                js("window.onNativeSpeechState && window.onNativeSpeechState('ready');");
+        try {
+            if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+                speechRecognizer = null;
+                return;
             }
-            @Override public void onBeginningOfSpeech() {
-                js("window.onNativeSpeechState && window.onNativeSpeechState('speaking');");
-            }
-            @Override public void onRmsChanged(float rmsdB) {
-                js("window.onNativeVoiceLevel && window.onNativeVoiceLevel(" + rmsdB + ");");
-            }
-            @Override public void onBufferReceived(byte[] buffer) {}
-            @Override public void onEndOfSpeech() {
-                js("window.onNativeSpeechState && window.onNativeSpeechState('processing');");
-            }
-            @Override public void onError(int error) {
-                speechActive = false;
-                String msg = speechError(error);
-                js("window.onNativeSpeechError && window.onNativeSpeechError(" + JSONObject.quote(msg) + ");");
-            }
-            @Override public void onResults(Bundle results) {
-                speechActive = false;
-                ArrayList<String> list = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
-                float[] conf = results.getFloatArray(SpeechRecognizer.CONFIDENCE_SCORES);
-                String text = list != null && !list.isEmpty() ? list.get(0) : "";
-                double confidence = conf != null && conf.length > 0 ? conf[0] : -1;
-                js("window.onNativeSpeech && window.onNativeSpeech(" + JSONObject.quote(speechTarget) + "," + JSONObject.quote(text) + "," + confidence + ");");
-            }
-            @Override public void onPartialResults(Bundle partialResults) {
-                ArrayList<String> list = partialResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
-                String text = list != null && !list.isEmpty() ? list.get(0) : "";
-                js("window.onNativeSpeechPartial && window.onNativeSpeechPartial(" + JSONObject.quote(speechTarget) + "," + JSONObject.quote(text) + ");");
-            }
-            @Override public void onEvent(int eventType, Bundle params) {}
-        });
+            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this);
+            speechRecognizer.setRecognitionListener(new RecognitionListener() {
+                @Override public void onReadyForSpeech(Bundle params) {
+                    speechActive = true;
+                    lastPartialText = "";
+                    js("window.onNativeSpeechState && window.onNativeSpeechState('ready');");
+                }
+                @Override public void onBeginningOfSpeech() {
+                    js("window.onNativeSpeechState && window.onNativeSpeechState('speaking');");
+                }
+                @Override public void onRmsChanged(float rmsdB) {
+                    js("window.onNativeVoiceLevel && window.onNativeVoiceLevel(" + rmsdB + ");");
+                }
+                @Override public void onBufferReceived(byte[] buffer) {}
+                @Override public void onEndOfSpeech() {
+                    js("window.onNativeSpeechState && window.onNativeSpeechState('processing');");
+                }
+                @Override public void onError(int error) {
+                    speechActive = false;
+                    if (!lastPartialText.trim().isEmpty() &&
+                            (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT || error == SpeechRecognizer.ERROR_CLIENT)) {
+                        deliverSpeech(lastPartialText, -1);
+                        lastPartialText = "";
+                        return;
+                    }
+                    String msg = speechError(error);
+                    lastPartialText = "";
+                    js("window.onNativeSpeechError && window.onNativeSpeechError(" + JSONObject.quote(msg) + ");");
+                }
+                @Override public void onResults(Bundle results) {
+                    speechActive = false;
+                    ArrayList<String> list = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+                    float[] conf = results.getFloatArray(SpeechRecognizer.CONFIDENCE_SCORES);
+                    String text = list != null && !list.isEmpty() ? list.get(0) : lastPartialText;
+                    double confidence = conf != null && conf.length > 0 ? conf[0] : -1;
+                    deliverSpeech(text == null ? "" : text, confidence);
+                    lastPartialText = "";
+                }
+                @Override public void onPartialResults(Bundle partialResults) {
+                    ArrayList<String> list = partialResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+                    String text = list != null && !list.isEmpty() ? list.get(0) : "";
+                    if (!text.trim().isEmpty()) lastPartialText = text;
+                    js("window.onNativeSpeechPartial && window.onNativeSpeechPartial(" + JSONObject.quote(speechTarget) + "," + JSONObject.quote(text) + ");");
+                }
+                @Override public void onEvent(int eventType, Bundle params) {}
+            });
+        } catch (Exception e) {
+            speechRecognizer = null;
+        }
+    }
+
+    private void deliverSpeech(String text, double confidence) {
+        String clean = text == null ? "" : text.trim();
+        if (clean.isEmpty()) {
+            js("window.onNativeSpeechError && window.onNativeSpeechError('没有识别到有效语音，请再说一次');");
+            return;
+        }
+        js("window.onNativeSpeech && window.onNativeSpeech(" + JSONObject.quote(speechTarget) + "," + JSONObject.quote(clean) + "," + confidence + ");");
     }
 
     public class AppBridge {
@@ -145,20 +175,22 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface public void speak(String text) {
             runOnUiThread(() -> {
-                if (tts != null && text != null && !text.trim().isEmpty()) {
+                if (tts != null && ttsReady && text != null && !text.trim().isEmpty()) {
                     if (speechRecognizer != null && speechActive) {
                         try { speechRecognizer.cancel(); } catch (Exception ignored) {}
                         speechActive = false;
                     }
                     tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "sproutspeak_turn");
+                } else {
+                    js("window.onNativeTtsDone && window.onNativeTtsDone();");
                 }
             });
         }
 
         @JavascriptInterface public String saveApiKey(String key) {
             if (key == null) return "API Key 为空";
-            String clean = key.trim().replace(" ", "");
-            if (clean.length() < 16) return "API Key 长度不正确，请检查是否完整粘贴";
+            String clean = key.replaceAll("\\s+", "").trim();
+            if (clean.length() < 20) return "API Key 看起来不完整，请重新复制粘贴";
             prefs.edit().putString(KEY_NAME, clean).apply();
             return "OK";
         }
@@ -171,36 +203,38 @@ public class MainActivity extends Activity {
             prefs.edit().remove(KEY_NAME).apply();
         }
 
-        @JavascriptInterface public String modelName() {
-            return MODEL;
-        }
+        @JavascriptInterface public String modelName() { return MODEL; }
+        @JavascriptInterface public boolean speechAvailable() { return speechRecognizer != null; }
+        @JavascriptInterface public boolean ttsAvailable() { return ttsReady; }
+        @JavascriptInterface public String deviceInfo() { return "Android " + android.os.Build.VERSION.RELEASE + " / SDK " + android.os.Build.VERSION.SDK_INT; }
 
         @JavascriptInterface public void chat(String messagesJson, String requestId) {
             new Thread(() -> doDeepSeek(messagesJson, requestId)).start();
-        }
-
-        @JavascriptInterface public String deviceInfo() {
-            return "Android " + android.os.Build.VERSION.RELEASE + " / SDK " + android.os.Build.VERSION.SDK_INT;
         }
     }
 
     private void startListeningInternal() {
         if (speechRecognizer == null) {
-            js("window.onNativeSpeechError && window.onNativeSpeechError('当前设备没有可用的系统语音识别服务');");
+            initSpeechRecognizer();
+        }
+        if (speechRecognizer == null) {
+            js("window.onNativeSpeechError && window.onNativeSpeechError('当前平板没有可用的系统语音识别服务，请检查 Google 语音服务或系统语音输入');");
             return;
         }
         try {
             if (tts != null) tts.stop();
-            speechRecognizer.cancel();
+            try { speechRecognizer.cancel(); } catch (Exception ignored) {}
+            lastPartialText = "";
             android.content.Intent intent = new android.content.Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
             intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
             intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US");
             intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "en-US");
             intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
             intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3);
+            intent.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false);
             intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 500L);
-            intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 900L);
-            intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 650L);
+            intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L);
+            intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 800L);
             speechRecognizer.startListening(intent);
         } catch (Exception e) {
             speechActive = false;
@@ -211,15 +245,15 @@ public class MainActivity extends Activity {
     private String speechError(int error) {
         switch (error) {
             case SpeechRecognizer.ERROR_AUDIO: return "录音出现问题，请检查麦克风";
-            case SpeechRecognizer.ERROR_CLIENT: return "语音识别已停止";
-            case SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS: return "没有麦克风权限";
+            case SpeechRecognizer.ERROR_CLIENT: return "语音识别已停止，请重试";
+            case SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS: return "没有麦克风权限，请在系统设置中允许";
             case SpeechRecognizer.ERROR_NETWORK:
-            case SpeechRecognizer.ERROR_NETWORK_TIMEOUT: return "系统语音识别网络异常，请重试";
+            case SpeechRecognizer.ERROR_NETWORK_TIMEOUT: return "系统语音识别网络异常，请检查网络后重试";
             case SpeechRecognizer.ERROR_NO_MATCH: return "没有听清，请再说一次";
             case SpeechRecognizer.ERROR_RECOGNIZER_BUSY: return "语音识别正忙，请稍后再试";
             case SpeechRecognizer.ERROR_SERVER: return "系统语音识别服务暂时不可用";
             case SpeechRecognizer.ERROR_SPEECH_TIMEOUT: return "没有检测到说话声音";
-            default: return "语音识别失败（" + error + "）";
+            default: return "语音识别失败（错误码 " + error + "）";
         }
     }
 
