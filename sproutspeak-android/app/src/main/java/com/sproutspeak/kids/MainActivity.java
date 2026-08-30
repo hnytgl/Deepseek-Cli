@@ -7,9 +7,10 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
-import android.speech.RecognitionListener;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
 import android.speech.RecognizerIntent;
-import android.speech.SpeechRecognizer;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
 import android.webkit.JavascriptInterface;
@@ -31,22 +32,21 @@ import java.util.Locale;
 
 public class MainActivity extends Activity {
     private static final int REQ_MIC = 1002;
-    private static final int REQ_SPEECH_FALLBACK = 1003;
+    private static final int REQ_SPEECH = 1003;
     private static final String MODEL = "deepseek-v4-flash";
     private static final String PREFS = "sproutspeak_local";
     private static final String KEY_NAME = "deepseek_api_key";
+    private static final long MIC_DEBOUNCE_MS = 1200L;
 
     private WebView webView;
     private TextToSpeech tts;
-    private SpeechRecognizer speechRecognizer;
     private SharedPreferences prefs;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private String speechTarget = "chat";
-    private String lastPartialText = "";
     private boolean pendingSpeech = false;
-    private boolean speechActive = false;
+    private boolean speechInFlight = false;
     private boolean ttsReady = false;
-    private boolean ignoreClientError = false;
-    private boolean fallbackLaunched = false;
+    private long lastMicLaunchAt = 0L;
 
     @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
     @Override public void onCreate(Bundle state) {
@@ -61,7 +61,6 @@ public class MainActivity extends Activity {
         webView.setWebViewClient(new WebViewClient());
         webView.addJavascriptInterface(new AppBridge(), "AndroidBridge");
         initTts();
-        initSpeechRecognizer();
         webView.loadUrl("file:///android_asset/index.html");
     }
 
@@ -90,90 +89,7 @@ public class MainActivity extends Activity {
         });
     }
 
-    private void initSpeechRecognizer() {
-        try {
-            if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-                speechRecognizer = null;
-                return;
-            }
-            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this);
-            speechRecognizer.setRecognitionListener(new RecognitionListener() {
-                @Override public void onReadyForSpeech(Bundle params) {
-                    speechActive = true;
-                    lastPartialText = "";
-                    fallbackLaunched = false;
-                    js("window.onNativeSpeechState && window.onNativeSpeechState('ready');");
-                }
-                @Override public void onBeginningOfSpeech() {
-                    js("window.onNativeSpeechState && window.onNativeSpeechState('speaking');");
-                }
-                @Override public void onRmsChanged(float rmsdB) {
-                    js("window.onNativeVoiceLevel && window.onNativeVoiceLevel(" + rmsdB + ");");
-                }
-                @Override public void onBufferReceived(byte[] buffer) {}
-                @Override public void onEndOfSpeech() {
-                    js("window.onNativeSpeechState && window.onNativeSpeechState('processing');");
-                }
-                @Override public void onError(int error) {
-                    speechActive = false;
-                    if (error == SpeechRecognizer.ERROR_CLIENT && ignoreClientError) {
-                        ignoreClientError = false;
-                        return;
-                    }
-                    if (!lastPartialText.trim().isEmpty() &&
-                            (error == SpeechRecognizer.ERROR_NO_MATCH ||
-                             error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
-                             error == SpeechRecognizer.ERROR_CLIENT)) {
-                        String partial = lastPartialText;
-                        lastPartialText = "";
-                        deliverSpeech(partial, -1);
-                        return;
-                    }
-                    lastPartialText = "";
-                    if (!fallbackLaunched &&
-                            (error == SpeechRecognizer.ERROR_NO_MATCH ||
-                             error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
-                             error == SpeechRecognizer.ERROR_SERVER ||
-                             error == SpeechRecognizer.ERROR_NETWORK ||
-                             error == SpeechRecognizer.ERROR_NETWORK_TIMEOUT)) {
-                        fallbackLaunched = true;
-                        launchFallbackRecognizer();
-                        return;
-                    }
-                    js("window.onNativeSpeechError && window.onNativeSpeechError(" + JSONObject.quote(speechError(error)) + ");");
-                }
-                @Override public void onResults(Bundle results) {
-                    speechActive = false;
-                    ArrayList<String> list = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
-                    float[] conf = results.getFloatArray(SpeechRecognizer.CONFIDENCE_SCORES);
-                    String text = list != null && !list.isEmpty() ? list.get(0) : lastPartialText;
-                    double confidence = conf != null && conf.length > 0 ? conf[0] : -1;
-                    lastPartialText = "";
-                    deliverSpeech(text, confidence);
-                }
-                @Override public void onPartialResults(Bundle partialResults) {
-                    ArrayList<String> list = partialResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
-                    String text = list != null && !list.isEmpty() ? list.get(0) : "";
-                    if (!text.trim().isEmpty()) lastPartialText = text;
-                    js("window.onNativeSpeechPartial && window.onNativeSpeechPartial(" + JSONObject.quote(speechTarget) + "," + JSONObject.quote(text) + ");");
-                }
-                @Override public void onEvent(int eventType, Bundle params) {}
-            });
-        } catch (Exception e) {
-            speechRecognizer = null;
-        }
-    }
-
-    private void deliverSpeech(String text, double confidence) {
-        String clean = text == null ? "" : text.trim();
-        if (clean.isEmpty()) {
-            js("window.onNativeSpeechError && window.onNativeSpeechError('没有识别到有效语音，请再说一次');");
-            return;
-        }
-        js("window.onNativeSpeech && window.onNativeSpeech(" + JSONObject.quote(speechTarget) + "," + JSONObject.quote(clean) + "," + confidence + ");");
-    }
-
-    private boolean fallbackRecognizerAvailable() {
+    private boolean speechActivityAvailable() {
         try {
             Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
             return i.resolveActivity(getPackageManager()) != null;
@@ -182,21 +98,40 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void launchFallbackRecognizer() {
-        if (!fallbackRecognizerAvailable()) {
-            js("window.onNativeSpeechError && window.onNativeSpeechError('当前平板没有可用的语音识别服务');");
+    private void launchSpeechOnce() {
+        if (speechInFlight) {
+            js("window.onNativeSpeechError && window.onNativeSpeechError('正在听上一句，请先完成这次回答');");
             return;
         }
+        if (!speechActivityAvailable()) {
+            js("window.onNativeSpeechError && window.onNativeSpeechError('当前平板没有可用的系统英语语音输入服务');");
+            return;
+        }
+
+        long now = SystemClock.elapsedRealtime();
+        long wait = MIC_DEBOUNCE_MS - (now - lastMicLaunchAt);
+        if (wait > 0) {
+            js("window.onNativeSpeechState && window.onNativeSpeechState('processing');");
+            mainHandler.postDelayed(this::launchSpeechOnce, wait);
+            return;
+        }
+
         try {
+            if (tts != null) tts.stop();
             Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
             i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
             i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US");
+            i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "en-US");
             i.putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak English");
             i.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3);
-            js("window.onNativeSpeechState && window.onNativeSpeechState('fallback');");
-            startActivityForResult(i, REQ_SPEECH_FALLBACK);
+            i.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false);
+            speechInFlight = true;
+            lastMicLaunchAt = now;
+            js("window.onNativeSpeechState && window.onNativeSpeechState('ready');");
+            startActivityForResult(i, REQ_SPEECH);
         } catch (Exception e) {
-            js("window.onNativeSpeechError && window.onNativeSpeechError(" + JSONObject.quote("备用语音识别启动失败：" + e.getMessage()) + ");");
+            speechInFlight = false;
+            js("window.onNativeSpeechError && window.onNativeSpeechError(" + JSONObject.quote("语音输入启动失败：" + e.getMessage()) + ");");
         }
     }
 
@@ -204,36 +139,21 @@ public class MainActivity extends Activity {
         @JavascriptInterface public void startSpeech(String target) {
             runOnUiThread(() -> {
                 speechTarget = target == null ? "chat" : target;
-                fallbackLaunched = false;
                 if (android.os.Build.VERSION.SDK_INT >= 23 && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                     pendingSpeech = true;
                     requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQ_MIC);
                 } else {
-                    startListeningInternal();
+                    launchSpeechOnce();
                 }
             });
         }
 
         @JavascriptInterface public void stopSpeech() {
-            runOnUiThread(() -> {
-                if (speechRecognizer != null && speechActive) {
-                    try {
-                        ignoreClientError = true;
-                        speechRecognizer.stopListening();
-                    } catch (Exception ignored) {}
-                }
-            });
+            // 单次系统语音输入模式不做强制中断，避免制造 RecognitionService busy。
         }
 
         @JavascriptInterface public void speak(String text) {
             runOnUiThread(() -> {
-                if (speechRecognizer != null && speechActive) {
-                    try {
-                        ignoreClientError = true;
-                        speechRecognizer.cancel();
-                    } catch (Exception ignored) {}
-                    speechActive = false;
-                }
                 if (tts != null && ttsReady && text != null && !text.trim().isEmpty()) {
                     tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "sproutspeak_turn");
                 } else {
@@ -259,62 +179,16 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface public String modelName() { return MODEL; }
-        @JavascriptInterface public boolean speechAvailable() { return speechRecognizer != null || fallbackRecognizerAvailable(); }
+        @JavascriptInterface public boolean speechAvailable() { return speechActivityAvailable(); }
         @JavascriptInterface public boolean ttsAvailable() { return ttsReady; }
         @JavascriptInterface public void chat(String messagesJson, String requestId) { new Thread(() -> doDeepSeek(messagesJson, requestId)).start(); }
-    }
-
-    private void startListeningInternal() {
-        if (tts != null) tts.stop();
-        if (speechRecognizer == null) initSpeechRecognizer();
-        if (speechRecognizer == null) {
-            launchFallbackRecognizer();
-            return;
-        }
-        try {
-            if (speechActive) {
-                ignoreClientError = true;
-                speechRecognizer.cancel();
-            }
-            lastPartialText = "";
-            ignoreClientError = false;
-            Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
-            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
-            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US");
-            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "en-US");
-            intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
-            intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3);
-            intent.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false);
-            intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 400L);
-            intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L);
-            intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 800L);
-            speechRecognizer.startListening(intent);
-        } catch (Exception e) {
-            speechActive = false;
-            launchFallbackRecognizer();
-        }
-    }
-
-    private String speechError(int error) {
-        switch (error) {
-            case SpeechRecognizer.ERROR_AUDIO: return "录音出现问题，请检查麦克风";
-            case SpeechRecognizer.ERROR_CLIENT: return "语音识别已停止";
-            case SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS: return "没有麦克风权限，请在系统设置中允许";
-            case SpeechRecognizer.ERROR_NETWORK:
-            case SpeechRecognizer.ERROR_NETWORK_TIMEOUT: return "语音识别网络异常";
-            case SpeechRecognizer.ERROR_NO_MATCH: return "没有听清，请再说一次";
-            case SpeechRecognizer.ERROR_RECOGNIZER_BUSY: return "语音识别正忙，请稍后再试";
-            case SpeechRecognizer.ERROR_SERVER: return "系统语音识别服务暂时不可用";
-            case SpeechRecognizer.ERROR_SPEECH_TIMEOUT: return "没有检测到说话声音";
-            default: return "语音识别失败（错误码 " + error + "）";
-        }
     }
 
     @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == REQ_MIC) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED && pendingSpeech) {
-                startListeningInternal();
+                launchSpeechOnce();
             } else {
                 js("window.onNativeSpeechError && window.onNativeSpeechError('需要麦克风权限才能进行口语练习');");
             }
@@ -324,15 +198,20 @@ public class MainActivity extends Activity {
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == REQ_SPEECH_FALLBACK) {
+        if (requestCode == REQ_SPEECH) {
+            speechInFlight = false;
             if (resultCode == RESULT_OK && data != null) {
                 ArrayList<String> rs = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
                 float[] cs = data.getFloatArrayExtra(RecognizerIntent.EXTRA_CONFIDENCE_SCORES);
                 String text = rs != null && !rs.isEmpty() ? rs.get(0) : "";
                 double confidence = cs != null && cs.length > 0 ? cs[0] : -1;
-                deliverSpeech(text, confidence);
+                if (text == null || text.trim().isEmpty()) {
+                    js("window.onNativeSpeechError && window.onNativeSpeechError('没有识别到回答，请再试一次');");
+                } else {
+                    js("window.onNativeSpeech && window.onNativeSpeech(" + JSONObject.quote(speechTarget) + "," + JSONObject.quote(text.trim()) + "," + confidence + ");");
+                }
             } else {
-                js("window.onNativeSpeechError && window.onNativeSpeechError('没有识别到回答，请再试一次');");
+                js("window.onNativeSpeechError && window.onNativeSpeechError('这次没有收到语音结果，请再按一次麦克风');");
             }
         }
     }
@@ -400,10 +279,7 @@ public class MainActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
-        if (speechRecognizer != null) {
-            try { speechRecognizer.cancel(); } catch (Exception ignored) {}
-            speechRecognizer.destroy();
-        }
+        mainHandler.removeCallbacksAndMessages(null);
         if (tts != null) { tts.stop(); tts.shutdown(); }
         if (webView != null) webView.destroy();
         super.onDestroy();
