@@ -1,229 +1,29 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
 <title>SproutSpeak</title>
-<link rel="stylesheet" href="styles.css">
+<style>
+:root{--bg:#0e1326;--panel:#151c33;--text:#fff;--muted:#aeb8d3;--green:#39d98a;--purple:#7b6cff;--red:#ff5f6d;--card:#fff;--ink:#1f2538;--soft:#f2f4fb}*{box-sizing:border-box}html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#eef1f7;color:#1f2538}button,input,select{font:inherit}.hidden{display:none!important}.app{min-height:100%;display:flex;flex-direction:column}.home{max-width:980px;width:100%;margin:auto;padding:24px}.top{display:flex;justify-content:space-between;align-items:center;gap:12px}.brand{font-size:28px;font-weight:900}.muted{color:#6f7891}.card{background:#fff;border:1px solid #e4e8f1;border-radius:24px;padding:22px;box-shadow:0 8px 24px rgba(22,31,58,.05)}.hero{margin-top:18px;background:linear-gradient(135deg,#fff,#f2efff)}.big{font-size:30px;font-weight:900;margin:8px 0}.btn{border:0;border-radius:16px;padding:14px 18px;font-weight:800;min-height:50px;cursor:pointer}.primary{background:var(--purple);color:#fff}.secondary{background:#eef1f8;color:#27304d}.danger{background:var(--red);color:#fff}.green{background:var(--green);color:#10271d}.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.taskgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:14px}.task{background:#fff;border:1px solid #e5e8f0;border-radius:20px;padding:18px}.task b{display:block;margin:6px 0}.settings{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px}.settings input,.settings select{width:100%;border:1px solid #dfe3ed;border-radius:12px;padding:12px}.notice{padding:12px 14px;border-radius:14px;background:#f5f7fb;color:#5f6880;line-height:1.6}.call{position:fixed;inset:0;background:radial-gradient(circle at 50% 20%,#293353 0,#11172b 48%,#0b1020 100%);color:#fff;display:flex;flex-direction:column;overflow:hidden}.calltop{display:flex;justify-content:space-between;align-items:center;padding:18px 22px;z-index:3}.calltag{font-size:13px;color:#cbd4eb}.timer{font-variant-numeric:tabular-nums;font-weight:800}.stage{flex:1;display:flex;align-items:center;justify-content:center;position:relative;padding:18px 20px 130px}.teacher{width:min(72vw,560px);height:min(72vw,560px);max-height:62vh;border-radius:50%;background:linear-gradient(#f4d7c8 0 58%,#314477 58%);position:relative;box-shadow:0 0 0 8px rgba(255,255,255,.06),0 24px 60px rgba(0,0,0,.28);overflow:hidden;transition:.2s}.teacher:before{content:"";position:absolute;width:52%;height:24%;left:24%;top:8%;background:#3b2f2f;border-radius:55% 50% 36% 36%;transform:rotate(-4deg)}.face-eye{position:absolute;top:37%;width:4.8%;height:4.8%;border-radius:50%;background:#27252a}.eye1{left:35%}.eye2{right:35%}.nose{position:absolute;left:48.5%;top:42%;width:3%;height:8%;border-radius:50%;border-left:2px solid rgba(90,55,50,.35)}.mouth{position:absolute;left:43%;top:52%;width:14%;height:4%;border:3px solid #9c4c55;border-top:0;border-radius:0 0 30px 30px;transition:.12s}.teacher.speaking .mouth{height:9%;background:#7a2d37;animation:talk .28s infinite alternate}.teacher.listening{box-shadow:0 0 0 10px rgba(57,217,138,.22),0 0 0 20px rgba(57,217,138,.08),0 24px 60px rgba(0,0,0,.3)}@keyframes talk{from{height:3%}to{height:10%}}.subtitle{position:absolute;left:50%;transform:translateX(-50%);bottom:118px;width:min(88vw,820px);background:rgba(9,14,28,.78);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,.12);border-radius:18px;padding:14px 18px;text-align:center;font-size:19px;line-height:1.5}.speaker{font-size:12px;color:#aeb8d3;margin-bottom:4px}.childsub{position:absolute;left:50%;transform:translateX(-50%);bottom:76px;width:min(88vw,820px);text-align:center;font-size:15px;color:#bdeed4;min-height:22px}.controls{position:absolute;left:0;right:0;bottom:18px;display:flex;justify-content:center;align-items:center;gap:18px;z-index:4}.round{width:64px;height:64px;border-radius:50%;border:0;font-size:25px;font-weight:900}.mic{width:86px;height:86px;background:#fff;color:#20263e;box-shadow:0 8px 28px rgba(0,0,0,.28)}.mic.listening{background:var(--green);animation:pulse 1s infinite}@keyframes pulse{50%{transform:scale(.96)}}.hang{background:var(--red);color:#fff}.repeat{background:#27314f;color:#fff}.statusbar{position:absolute;top:62px;left:50%;transform:translateX(-50%);background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.1);padding:7px 12px;border-radius:99px;font-size:12px;color:#cdd5eb}.overlay{position:fixed;inset:0;background:rgba(10,15,30,.68);display:flex;align-items:center;justify-content:center;padding:18px;z-index:20}.sheet{width:min(720px,96vw);max-height:90vh;overflow:auto;background:#fff;border-radius:24px;padding:22px}.qtitle{font-size:24px;font-weight:900}.transcript{background:#f3f5fa;border-radius:14px;padding:14px;min-height:58px;margin:12px 0;color:#3d465f}.scoregrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0}.score{background:#f4f6fb;border-radius:14px;padding:12px;text-align:center}.score b{display:block;font-size:25px}@media(max-width:760px){.home{padding:14px}.taskgrid,.settings{grid-template-columns:1fr}.teacher{width:min(82vw,440px);height:min(82vw,440px)}.subtitle{font-size:17px}.scoregrid{grid-template-columns:repeat(2,1fr)}}
+</style>
 </head>
 <body>
 <div class="app">
-  <header class="topbar">
-    <div class="brandwrap">
-      <div class="brandicon" aria-hidden="true"><span>Hi</span><i>🌱</i></div>
-      <div><div class="brand">SproutSpeak</div><div class="sub">儿童英语口语 AI 陪练 · Android 平板版</div></div>
-    </div>
-    <div class="topright">
-      <div class="levelpill"><span>当前水平</span><b id="levelBadge">待评估</b></div>
-      <span class="pill">🔥 <b id="streak">1</b> 天</span>
-      <span class="pill">⭐ <b id="stars">20</b></span>
-    </div>
-  </header>
-
-  <nav class="tabs" aria-label="主功能">
-    <button class="tab on" data-page="home">今日学习</button>
-    <button class="tab" data-page="chat">一对一口语</button>
-    <button class="tab" data-page="ket">KET专项</button>
-    <button class="tab" data-page="assess">水平测评</button>
-    <button class="tab" data-page="plan">学习计划</button>
-    <button class="tab" data-page="parent">家长中心</button>
-    <button class="tab" data-page="settings">设置</button>
-  </nav>
-
-  <main>
-    <section id="page-home" class="page on">
-      <div id="placementBanner" class="card placement-card">
-        <div class="placement-icon">🎯</div>
-        <div class="placement-main">
-          <div class="eyebrow">FIRST STEP · 5–8 MIN</div>
-          <h1>先了解孩子现在能说到什么程度</h1>
-          <p>第一次使用先完成 5 题口语测评。系统会综合回答长度、词汇、句型、时态和互动能力，自动判断当前阶段，再生成每天固定学习任务。</p>
-          <div class="row"><span class="chip">不背模板</span><span class="chip">逐题变难</span><span class="chip">自动定级</span><span class="chip">生成每日计划</span></div>
-          <button id="startPlacement" class="btn primary">开始首次水平评估</button>
-        </div>
-      </div>
-
-      <div id="dailyArea" hidden>
-        <div class="hero-grid">
-          <article class="card hero">
-            <div class="eyebrow" id="todayDateLabel">TODAY</div>
-            <h1 id="dailyTitle">今天的 15 分钟口语课</h1>
-            <p id="dailySummary"></p>
-            <div class="progressline"><div><span>今日完成</span><b id="dailyDoneText">0 / 3</b></div><div class="bar"><i id="dailyProgress"></i></div></div>
-          </article>
-          <article class="card coach-card">
-            <div class="teacher-mini"><div class="avatar small" id="homeAvatar"><span class="hair"></span><span class="eye e1"></span><span class="eye e2"></span><span class="mouth"></span></div><div><b>Leo Teacher</b><div class="sub">根据昨天表现调整今天难度</div></div></div>
-            <p id="coachAdvice" class="feedback"></p>
-          </article>
-        </div>
-
-        <div class="section-title"><div><div class="eyebrow">DAILY ROUTINE</div><h2>今天固定 3 项任务</h2></div><span>完成后自动记录</span></div>
-        <div id="dailyTasks" class="task-grid"></div>
-
-        <div class="section-title"><h2>当前能力画像</h2><span>每次开口后动态更新</span></div>
-        <div class="score-grid">
-          <article class="score-card"><span>流利度</span><b id="scoreF">—</b><div class="bar"><i id="barF"></i></div></article>
-          <article class="score-card"><span>词汇表达</span><b id="scoreV">—</b><div class="bar"><i id="barV"></i></div></article>
-          <article class="score-card"><span>语法准确</span><b id="scoreG">—</b><div class="bar"><i id="barG"></i></div></article>
-          <article class="score-card"><span>互动能力</span><b id="scoreI">—</b><div class="bar"><i id="barI"></i></div></article>
-        </div>
-      </div>
-    </section>
-
-    <section id="page-chat" class="page">
-      <div class="section-title">
-        <div><div class="eyebrow">VOICE FIRST</div><h1>一对一英语口语</h1></div>
-        <select id="sceneSelect" class="select compact">
-          <option value="shop">🍦 冰淇淋店</option>
-          <option value="zoo">🦁 动物园</option>
-          <option value="school">🎒 新同学</option>
-          <option value="restaurant">🍝 餐厅点餐</option>
-          <option value="airport">✈️ 机场问路</option>
-          <option value="weekend">🌳 周末计划</option>
-        </select>
-      </div>
-
-      <div class="chat-grid">
-        <article class="card chat-card">
-          <div class="teacher-stage">
-            <div class="avatar" id="chatAvatar"><span class="hair"></span><span class="eye e1"></span><span class="eye e2"></span><span class="mouth"></span></div>
-            <div class="teacher-info">
-              <div class="teacher-name">Leo Teacher <span id="aiMode" class="sub">· Flash</span></div>
-              <div class="teacher-state" id="teacherState">等待开始</div>
-              <div class="voice-wave" id="voiceWave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-            </div>
-            <div class="live-badge" id="liveBadge"><span></span><b id="liveText">单次模式</b></div>
-          </div>
-
-          <div id="chatLog" class="chat-log" aria-live="polite"></div>
-          <div id="quickPhrases" class="quick-phrases"></div>
-
-          <div class="speech-box">
-            <div class="speech-head"><b>孩子刚才说的内容</b><span id="speechStatus">等待语音</span></div>
-            <textarea id="speechText" rows="3" placeholder="说话后会实时显示在这里；识别完成后会自动发送。也可以手动输入。"></textarea>
-            <div class="row actions">
-              <button id="liveStart" class="btn green">🎧 开始连续真人对话</button>
-              <button id="singleSpeak" class="btn dark">🎙️ 单次说一句并自动发送</button>
-              <button id="manualSend" class="btn primary">发送输入文字</button>
-              <button id="liveStop" class="btn secondary">结束连续对话</button>
-            </div>
-          </div>
-        </article>
-
-        <aside class="side-stack">
-          <article class="card"><h3>实时反馈</h3><div id="liveFeedback" class="feedback">回答后会给一个优点、一个改进点和更自然的表达。</div></article>
-          <article class="card">
-            <h3>本轮表现</h3>
-            <div class="metric"><span>回答长度</span><b id="metricWords">—</b></div>
-            <div class="metric"><span>连接词</span><b id="metricLinks">—</b></div>
-            <div class="metric"><span>语音识别</span><b id="metricConfidence">—</b></div>
-            <div class="metric"><span>对话轮次</span><b id="metricTurns">0</b></div>
-          </article>
-          <article class="card"><h3>今日任务</h3><div id="activeTaskInfo" class="feedback">从“今日学习”进入任务后，这里会显示目标轮次。</div></article>
-        </aside>
-      </div>
-    </section>
-
-    <section id="page-ket" class="page">
-      <div class="card ket-hero">
-        <div class="eyebrow">A2 KEY / KET SPEAKING</div>
-        <h1>KET 口语专项训练</h1>
-        <p id="ketReadiness">完成首次水平评估后，系统会判断是否已进入 KET 训练阶段。低于 A2 也可以提前体验，但每日任务会以当前能力为主。</p>
-      </div>
-      <div class="ket-grid">
-        <article class="ket-card"><div class="part">PART 1</div><h2>个人信息与日常问答</h2><p>训练完整回答、频率、过去经历和未来计划。</p><button class="btn primary ketStart" data-ket="part1">开始 Part 1</button></article>
-        <article class="ket-card"><div class="part">PART 2</div><h2>图片主题讨论</h2><div class="picture-row"><span>🚲</span><span>🎬</span><span>🏊</span><span>🧺</span><span>🏛️</span></div><p>训练喜欢/不喜欢、给理由、回应搭档并主动提问。</p><button class="btn primary ketStart" data-ket="part2">开始 Part 2</button></article>
-        <article class="ket-card"><div class="part">MOCK</div><h2>完整模拟</h2><p>连续完成 Part 1 + Part 2，结束后给四维反馈。</p><button class="btn green ketStart" data-ket="mock">开始完整模拟</button></article>
-      </div>
-    </section>
-
-    <section id="page-assess" class="page">
-      <div class="section-title">
-        <div><div class="eyebrow" id="assessType">PLACEMENT</div><h1 id="assessTitle">首次口语水平评估</h1></div>
-        <button id="resetAssessment" class="btn secondary">重新开始</button>
-      </div>
-      <div class="assessment-grid">
-        <article class="card">
-          <div class="step-badge">第 <b id="questionNo">1</b> / <b id="questionTotal">5</b> 题</div>
-          <h2 id="questionText">What is your name and what do you like?</h2>
-          <p id="questionHint" class="feedback"></p>
-          <textarea id="assessmentText" rows="4" placeholder="点击麦克风回答，识别内容会显示在这里。"></textarea>
-          <div class="row actions">
-            <button id="assessmentMic" class="btn dark">🎙️ 语音回答</button>
-            <button id="submitAssessment" class="btn primary">提交本题</button>
-            <button id="sampleAssessment" class="btn secondary">填入示例</button>
-          </div>
-          <div id="assessmentSpeechStatus" class="sub statusline">等待回答</div>
-        </article>
-        <article class="card">
-          <h3>这次评估看什么？</h3>
-          <ul class="clean-list">
-            <li>能不能用完整句表达，而不是只说单词。</li>
-            <li>是否会用 and / because / but 等连接表达。</li>
-            <li>是否能谈过去、日常习惯和个人观点。</li>
-            <li>是否能主动提问并保持互动。</li>
-            <li>语音识别置信度只作辅助，不冒充专业音素评分。</li>
-          </ul>
-        </article>
-      </div>
-      <article id="assessmentResult" class="card result-card" hidden>
-        <div class="result-head"><div><div class="eyebrow">RESULT</div><h2>评估结果</h2></div><strong id="overallScore">—</strong></div>
-        <div id="placementResultText" class="feedback"></div>
-        <div class="row actions"><button id="goDailyAfterAssessment" class="btn primary">查看定制每日任务</button><button id="goPlanAfterAssessment" class="btn secondary">查看 7 天计划</button></div>
-      </article>
-    </section>
-
-    <section id="page-plan" class="page">
-      <div class="section-title"><div><div class="eyebrow">PERSONALIZED</div><h1>7 天口语提升计划</h1></div><button id="refreshPlan" class="btn secondary">按最新数据更新</button></div>
-      <article id="planSummary" class="card plan-summary"></article>
-      <div id="weeklyPlan" class="weekly-grid"></div>
-    </section>
-
-    <section id="page-parent" class="page">
-      <div class="section-title"><div><div class="eyebrow">PARENT VIEW</div><h1>家长中心</h1></div></div>
-      <div class="parent-stats">
-        <article class="score-card"><span>当前水平</span><b id="parentLevel">待评估</b><small id="placementDate">—</small></article>
-        <article class="score-card"><span>累计回答</span><b id="parentAnswers">0</b><small>轮</small></article>
-        <article class="score-card"><span>学习时长</span><b id="parentMinutes">0</b><small>分钟</small></article>
-        <article class="score-card"><span>今日任务</span><b id="parentDaily">0/3</b><small>项</small></article>
-      </div>
-      <div class="parent-grid">
-        <article class="card"><h2>学习观察</h2><div id="parentInsight" class="feedback"></div></article>
-        <article class="card"><h2>家长怎么配合</h2><div class="feedback">每天只要坚持完成 3 项固定任务即可。不要要求背固定答案；孩子卡住时，可以提示一个关键词，然后让孩子自己把句子说完整。</div></article>
-      </div>
-    </section>
-
-    <section id="page-settings" class="page">
-      <div class="settings-grid">
-        <article class="card">
-          <div class="eyebrow">DEEPSEEK</div><h2>Flash API</h2>
-          <label>模型<input value="DeepSeek V4 Flash" disabled></label>
-          <label>API Key</label>
-          <div class="key-row"><input id="apiKey" type="password" placeholder="粘贴 DeepSeek API Key" autocomplete="off"><button id="toggleKey" class="btn secondary" type="button">显示</button></div>
-          <div class="row actions"><button id="saveAndTestKey" class="btn primary">保存并测试</button><button id="clearKey" class="btn danger">清除</button></div>
-          <div id="keyStatus" class="notice">尚未检查。</div>
-        </article>
-        <article class="card">
-          <div class="eyebrow">LEARNER</div><h2>孩子档案</h2>
-          <label>昵称<input id="childName" maxlength="20"></label>
-          <label>年龄<select id="childAge"><option>6</option><option>7</option><option>8</option><option>9</option><option>10</option><option>11</option><option>12</option></select></label>
-          <label>兴趣<select id="childInterest"><option value="food">美食</option><option value="animals">动物</option><option value="sports">运动</option><option value="stories">故事</option><option value="space">太空</option><option value="travel">旅行</option></select></label>
-          <label>水平（家长可调整）<select id="manualLevel"><option value="prea1">Pre-A1 启蒙</option><option value="a1">A1 基础</option><option value="ket">A2 Key / KET</option><option value="b1">B1 PET</option></select></label>
-          <button id="saveProfile" class="btn primary">保存档案</button>
-        </article>
-        <article class="card">
-          <div class="eyebrow">DEVICE</div><h2>语音状态</h2>
-          <div class="metric"><span>系统语音识别</span><b id="speechSupport">检测中</b></div>
-          <div class="metric"><span>英语朗读</span><b id="ttsSupport">检测中</b></div>
-          <p class="feedback">本版直接调用 Android 系统 SpeechRecognizer。若平板没有安装可用语音服务，会明确提示，不再出现“点了没反应”。</p>
-          <button id="testVoice" class="btn secondary">🔊 测试老师声音</button>
-        </article>
-      </div>
-    </section>
-  </main>
-  <footer>SproutSpeak · 先评估，再每天固定练习，再根据表现动态调整</footer>
+<main id="home" class="home">
+<div class="top"><div><div class="brand">SproutSpeak</div><div class="muted">像视频通话一样练英语</div></div><button class="btn secondary" id="openSettings">⚙ 设置</button></div>
+<section id="firstCard" class="card hero"><div class="muted">FIRST STEP</div><div class="big">先做一次 5 分钟口语评估</div><p class="muted">Leo 老师会像视频通话一样问 5 个问题。孩子只需要看着老师、点麦克风回答。完成后自动判断当前水平，并生成每天固定学习任务。</p><button class="btn primary" id="startAssessment">开始面对面测评</button></section>
+<section id="dailyCard" class="card hero hidden"><div class="row" style="justify-content:space-between"><div><div class="muted">TODAY</div><div class="big" id="dailyTitle">今天的 15 分钟口语课</div></div><div class="notice" id="levelBadge"></div></div><p id="dailyDesc" class="muted"></p><button class="btn primary" id="startDaily">📹 开始今天的视频口语课</button></section>
+<div id="tasksWrap" class="hidden"><h2>今天固定 3 项任务</h2><div class="taskgrid" id="taskGrid"></div></div>
+<section class="card" style="margin-top:14px"><div class="row" style="justify-content:space-between"><h2 style="margin:0">学习状态</h2><button class="btn secondary" id="reassess">重新测评</button></div><div id="summary" class="muted">还没有测评数据。</div></section>
+</main>
+<section id="call" class="call hidden"><div class="calltop"><div><b>Leo Teacher</b><div class="calltag" id="callTopic">English speaking</div></div><div class="timer" id="timer">00:00</div></div><div class="statusbar" id="callStatus">正在连接老师…</div><div class="stage"><div class="teacher" id="teacher"><i class="face-eye eye1"></i><i class="face-eye eye2"></i><i class="nose"></i><i class="mouth"></i></div><div class="subtitle"><div class="speaker">LEO</div><div id="teacherSubtitle">Hello!</div></div><div class="childsub" id="childSubtitle"></div></div><div class="controls"><button class="round repeat" id="repeatBtn">🔊</button><button class="round mic" id="micBtn">🎙</button><button class="round hang" id="hangBtn">✕</button></div></section>
+<div id="assessmentSheet" class="overlay hidden"><div class="sheet"><div class="muted">口语水平评估</div><div class="qtitle" id="assessTitle">准备开始</div><p class="muted" id="assessHint">老师说完以后点麦克风回答。</p><div class="transcript" id="assessTranscript">孩子的回答会显示在这里。</div><div class="row"><button class="btn primary" id="assessMic">🎙 点一下回答</button><button class="btn secondary" id="cancelAssessment">退出测评</button></div></div></div>
+<div id="resultSheet" class="overlay hidden"><div class="sheet"><div class="qtitle">测评完成</div><p class="muted" id="resultText"></p><div class="scoregrid"><div class="score">流利度<b id="rf">—</b></div><div class="score">词汇<b id="rv">—</b></div><div class="score">语法<b id="rg">—</b></div><div class="score">互动<b id="ri">—</b></div></div><button class="btn primary" id="finishResult">生成每天学习任务</button></div></div>
+<div id="settingsSheet" class="overlay hidden"><div class="sheet"><div class="qtitle">设置</div><div class="settings"><div><label>孩子昵称</label><input id="childName" value="Mia"/><label style="display:block;margin-top:10px">年龄</label><select id="childAge"><option>6</option><option>7</option><option>8</option><option selected>9</option><option>10</option><option>11</option><option>12</option></select></div><div><label>DeepSeek API Key</label><input id="apiKey" type="password" placeholder="sk-..." autocomplete="off"/><div class="notice" style="margin-top:10px">模型固定使用 deepseek-v4-flash。Key 仅保存在本机 Android 存储。</div></div></div><div class="row" style="margin-top:14px"><button class="btn primary" id="saveSettings">保存并测试</button><button class="btn secondary" id="closeSettings">关闭</button></div><div id="settingsStatus" class="muted" style="margin-top:10px"></div></div></div>
 </div>
-<div id="toast" role="status" aria-live="polite"></div>
-<script src="app.js"></script>
+<script>
+(function(){const $=s=>document.querySelector(s);const STORE='sproutspeak_call_v1';const def={profile:{name:'Mia',age:9},assessed:false,level:'a1',scores:{f:60,v:60,g:60,i:60},stats:{days:0,turns:0},dailyDate:'',dailyDone:0};let state=load(),pending={},req=0,mode='lesson',turns=0,chat=[],teacherLine='',listening=false,callStart=0,timerId=null,assessIndex=0,assessAnswers=[],assessmentOpen=false;const questions=[["What is your name and how old are you?","先从简单信息开始。"],["What do you like doing after school?","尽量说 2 句。"],["Tell me about what you did last weekend.","尝试使用过去时。"],["Which is better: swimming or going to the cinema? Why?","表达偏好并说明原因。"],["Ask me a question about my hobbies.","主动问老师一个问题。"]];const levels={prea1:{name:'Pre-A1 启蒙',desc:'重点建立开口习惯和最简单生活句。'},a1:{name:'A1 基础',desc:'重点训练完整简单句、日常话题和 because/and。'},ket:{name:'A2 Key / KET',desc:'重点训练 KET Part 1 完整回答和 Part 2 偏好讨论。'},b1:{name:'B1 PET',desc:'重点训练观点、经历、理由和更长互动。'}};function load(){try{return Object.assign({},def,JSON.parse(localStorage.getItem(STORE)||'{}'))}catch(e){return JSON.parse(JSON.stringify(def))}}function save(){localStorage.setItem(STORE,JSON.stringify(state));renderHome()}function today(){return new Date().toISOString().slice(0,10)}function hasApi(){try{return !!(window.AndroidBridge&&AndroidBridge.hasApiKey&&AndroidBridge.hasApiKey())}catch(e){return false}}function speak(t){teacherLine=t;$('#teacherSubtitle').textContent=t;if(window.AndroidBridge&&AndroidBridge.speak)AndroidBridge.speak(t)}function renderHome(){$('#firstCard').classList.toggle('hidden',state.assessed);$('#dailyCard').classList.toggle('hidden',!state.assessed);$('#tasksWrap').classList.toggle('hidden',!state.assessed);$('#reassess').style.visibility=state.assessed?'visible':'hidden';if(state.assessed){$('#levelBadge').textContent=levels[state.level].name;$('#dailyTitle').textContent=state.level==='ket'?'今天的 KET 视频口语课':'今天的 15 分钟视频口语课';$('#dailyDesc').textContent=levels[state.level].desc;const tasks=dailyTasks();$('#taskGrid').innerHTML=tasks.map((x,i)=>`<div class="task"><span class="muted">任务 ${i+1}</span><b>${x[0]}</b><div class="muted">${x[1]}</div></div>`).join('');$('#summary').textContent=`当前水平：${levels[state.level].name}。流利度 ${state.scores.f}，词汇 ${state.scores.v}，语法 ${state.scores.g}，互动 ${state.scores.i}。`}else $('#summary').textContent='还没有测评数据。'}function dailyTasks(){if(state.level==='prea1')return[['3 分钟热身','问候、颜色、食物'],['8 分钟真人对话','简单生活场景，一问一答'],['4 分钟复练','今天最常用的 5 个句子']];if(state.level==='a1')return[['3 分钟热身','日常活动快速问答'],['8 分钟真人对话','购物/学校/周末场景'],['4 分钟扩句','每次回答再多说一句']];if(state.level==='ket')return[['3 分钟 Part 1','个人信息和日常生活'],['8 分钟 Part 2','偏好讨论 + because + 主动提问'],['4 分钟复盘','练今天最薄弱的 3 题']];return[['3 分钟热身','观点和经历'],['8 分钟真人对话','连续表达 + 追问'],['4 分钟提升','连接词和自然表达']]}function lessonTopic(){const d=new Date().getDay();if(state.level==='ket')return d%2?'KET Part 1 · Daily life':'KET Part 2 · Free-time discussion';const pool=['Ice cream shop','At the zoo','New classmate','Weekend plans','At a restaurant','Travel day','My hobbies'];return pool[d%pool.length]}function systemPrompt(){let level=levels[state.level].name;let extra=state.level==='ket'?'Use A2 Key speaking style. Mix Part 1 personal questions and Part 2 preference discussion. Encourage reasons and follow-up questions.':'Use age-appropriate everyday English.';return `You are Leo, a warm one-on-one English speaking tutor speaking to a ${state.profile.age}-year-old child. Level: ${level}. ${extra} This feels like a friendly video call. Ask ONE short question at a time. Keep your reply under 35 words. Praise briefly, correct at most one issue, then naturally continue. Never ask for address, school name, phone or private data. Return ONLY JSON: {"reply":"English reply","praise":"short Chinese praise","improve":"one short Chinese tip","natural":"better English version"}`}function startCall(){if(!hasApi()){alert('请先在设置中保存并测试 DeepSeek API Key');$('#settingsSheet').classList.remove('hidden');return}turns=0;chat=[{role:'system',content:systemPrompt()}];$('#call').classList.remove('hidden');$('#childSubtitle').textContent='';callStart=Date.now();clearInterval(timerId);timerId=setInterval(updateTimer,1000);updateTimer();$('#callTopic').textContent=lessonTopic();const open=state.level==='ket'?"Hi! Nice to see you. Let's practise your A2 Key speaking. First, what do you usually do after school?":"Hi! Nice to see you. How are you today?";chat.push({role:'assistant',content:open});speak(open);setStatus('Leo 老师正在说…')}function endCall(){$('#call').classList.add('hidden');clearInterval(timerId);if(window.AndroidBridge&&AndroidBridge.stopSpeech)AndroidBridge.stopSpeech();if(turns>0){state.stats.turns+=turns;state.dailyDate=today();state.dailyDone=Math.min(3,state.dailyDone+1);save()}}function updateTimer(){let s=Math.max(0,Math.floor((Date.now()-callStart)/1000));$('#timer').textContent=String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0')}function setStatus(t){$('#callStatus').textContent=t}function startSpeech(target='chat'){if(!window.AndroidBridge||!AndroidBridge.startSpeech){alert('当前安装包没有语音接口');return}listening=true;$('#micBtn').classList.add('listening');$('#teacher').classList.add('listening');if(target==='assessment')$('#assessTranscript').textContent='正在听你说…';else $('#childSubtitle').textContent='正在听你说…';setStatus('轮到你说英语');AndroidBridge.startSpeech(target)}function metric(t){const w=t.trim().split(/\s+/).filter(Boolean),links=(t.match(/\b(and|because|but|so|then|also|although)\b/ig)||[]).length,q=t.includes('?');return{f:clamp(42+w.length*2.3+links*3),v:clamp(48+Math.min(w.length,18)*2),g:clamp(50+links*6+(/\b(went|was|were|did|played|visited|will|usually|often)\b/i.test(t)?9:0)),i:clamp(48+Math.min(w.length,14)*2+(q?14:0)+links*3)}}function clamp(x){return Math.max(0,Math.min(100,Math.round(x)))}function updateScores(m){for(const k of['f','v','g','i'])state.scores[k]=clamp(state.scores[k]*.75+m[k]*.25)}function deepseek(messages,cb){const id='r'+(++req)+'_'+Date.now();pending[id]=cb;AndroidBridge.chat(JSON.stringify(messages),id)}window.onAndroidChat=function(id,ok,val){if(pending[id]){const cb=pending[id];delete pending[id];cb(ok,val)}};function parseJSON(raw){try{const s=raw.indexOf('{'),e=raw.lastIndexOf('}');return JSON.parse(raw.slice(s,e+1))}catch(e){return null}}function sendChild(text){if(!text)return;turns++;$('#childSubtitle').textContent='你：'+text;updateScores(metric(text));chat.push({role:'user',content:text});setStatus('Leo 老师在想…');deepseek(chat,function(ok,val){if(!ok){setStatus('连接 DeepSeek 失败');$('#teacherSubtitle').textContent=val;return}let o=parseJSON(val)||{reply:val,praise:'',improve:'',natural:text};chat.push({role:'assistant',content:o.reply});teacherLine=o.reply;$('#teacherSubtitle').textContent=o.reply;if(o.improve)$('#childSubtitle').textContent='小提示：'+o.improve;speak(o.reply)})}window.onNativeSpeechState=function(s){if(s==='ready'||s==='speaking')setStatus('正在听你说…');else if(s==='processing')setStatus('正在识别…');else if(s==='fallback')setStatus('正在启用备用语音识别…')};window.onNativeSpeechPartial=function(target,text){if(!text)return;if(target==='assessment')$('#assessTranscript').textContent=text;else $('#childSubtitle').textContent='你：'+text};window.onNativeSpeech=function(target,text){listening=false;$('#micBtn').classList.remove('listening');$('#teacher').classList.remove('listening');if(target==='assessment'){handleAssessmentAnswer(text);return}$('#childSubtitle').textContent='你：'+text;sendChild(text)};window.onNativeSpeechError=function(msg){listening=false;$('#micBtn').classList.remove('listening');$('#teacher').classList.remove('listening');setStatus(msg);if(assessmentOpen)$('#assessTranscript').textContent=msg;else $('#childSubtitle').textContent=msg};window.onNativeTtsStart=function(){$('#teacher').classList.add('speaking');$('#teacher').classList.remove('listening');setStatus('Leo 老师正在说…')};window.onNativeTtsDone=function(){$('#teacher').classList.remove('speaking');setStatus('轮到你了，点麦克风说话')};window.onNativeTtsError=function(msg){setStatus(msg)};function startAssessment(){if(!hasApi()){alert('先在设置中保存 DeepSeek API Key');$('#settingsSheet').classList.remove('hidden');return}assessmentOpen=true;assessIndex=0;assessAnswers=[];$('#assessmentSheet').classList.remove('hidden');showAssessQ()}function showAssessQ(){const q=questions[assessIndex];$('#assessTitle').textContent=`第 ${assessIndex+1}/5 题：${q[0]}`;$('#assessHint').textContent=q[1];$('#assessTranscript').textContent='老师说完以后，点麦克风回答。';speak(q[0])}function handleAssessmentAnswer(text){$('#assessTranscript').textContent=text;assessAnswers.push(text);assessIndex++;if(assessIndex<questions.length){setTimeout(showAssessQ,450)}else finishAssessment()}function finishAssessment(){assessmentOpen=false;$('#assessmentSheet').classList.add('hidden');const ms=assessAnswers.map(metric);const avg=k=>clamp(ms.reduce((a,x)=>a+x[k],0)/ms.length);state.scores={f:avg('f'),v:avg('v'),g:avg('g'),i:avg('i')};const overall=Math.round((state.scores.f+state.scores.v+state.scores.g+state.scores.i)/4);let lvl=overall<50?'prea1':overall<65?'a1':overall<80?'ket':'b1';state.level=lvl;state.assessed=true;save();$('#rf').textContent=state.scores.f;$('#rv').textContent=state.scores.v;$('#rg').textContent=state.scores.g;$('#ri').textContent=state.scores.i;$('#resultText').textContent=`根据 5 个回答，当前建议级别为 ${levels[lvl].name}。后续每天固定安排 3 个口语任务，并根据实际表现自动调整难度。`;$('#resultSheet').classList.remove('hidden')}$('#startAssessment').onclick=startAssessment;$('#reassess').onclick=startAssessment;$('#assessMic').onclick=()=>startSpeech('assessment');$('#cancelAssessment').onclick=()=>{$('#assessmentSheet').classList.add('hidden');assessmentOpen=false};$('#finishResult').onclick=()=>{$('#resultSheet').classList.add('hidden');renderHome()};$('#startDaily').onclick=startCall;$('#micBtn').onclick=()=>{if(!listening)startSpeech('chat');else if(window.AndroidBridge&&AndroidBridge.stopSpeech)AndroidBridge.stopSpeech()};$('#hangBtn').onclick=endCall;$('#repeatBtn').onclick=()=>teacherLine&&speak(teacherLine);$('#openSettings').onclick=()=>{$('#childName').value=state.profile.name;$('#childAge').value=state.profile.age;$('#settingsSheet').classList.remove('hidden')};$('#closeSettings').onclick=()=>$('#settingsSheet').classList.add('hidden');$('#saveSettings').onclick=function(){state.profile.name=$('#childName').value.trim()||'Mia';state.profile.age=Number($('#childAge').value)||9;const key=$('#apiKey').value.trim();if(!key){$('#settingsStatus').textContent='请输入 DeepSeek API Key';return}let r='';try{r=AndroidBridge.saveApiKey(key)}catch(e){r='保存失败'}if(r!=='OK'){$('#settingsStatus').textContent=r;return}$('#settingsStatus').textContent='正在测试 DeepSeek…';deepseek([{role:'user',content:'Reply with exactly OK'}],function(ok,val){$('#settingsStatus').textContent=ok?'✅ DeepSeek 连接成功':'❌ '+val;if(ok){$('#apiKey').value='';save()}})};renderHome()})();
+</script>
 </body>
 </html>
