@@ -8,8 +8,8 @@ android {
         applicationId 'com.sproutspeak.kids'
         minSdk 23
         targetSdk 35
-        versionCode 5
-        versionName '1.4.0'
+        versionCode 6
+        versionName '1.5.0'
     }
 
     buildTypes {
@@ -18,4 +18,8 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
+}
+
+dependencies {
+    implementation 'com.alphacephei:vosk-android:0.3.75'
 }
