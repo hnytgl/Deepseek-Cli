@@ -2,36 +2,47 @@
 
 [![CI](https://github.com/hnytgl/Deepseek-Cli/actions/workflows/ci.yml/badge.svg)](https://github.com/hnytgl/Deepseek-Cli/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 
-一个参考 Codex CLI 体验、完全适配 DeepSeek API 的命令行编程代理。它可以在终端里对话、读取和修改项目文件、运行命令、自动调用工具，并用窗口化界面展示任务过程、当前进度、工具日志和模型思考内容。
+对标 OpenAI Codex CLI 体验、完全适配 DeepSeek API 的命令行编程代理。在终端里对话、读取和修改项目文件、运行命令、搜索代码、自动调用工具，并用窗口化界面展示任务过程、当前进度、工具日志和模型思考内容。
+
+**中国人自己的 AI 编程终端** —— 用 DeepSeek 的超低价格获得 Codex CLI 级别的开发体验。
 
 ## 功能特性
 
-- 适配 DeepSeek OpenAI-compatible Chat Completions API。
-- 支持 `deepseek-v4-flash` 和 `deepseek-v4-pro` 等当前 DeepSeek API 模型。
+### 核心能力
+- 适配 DeepSeek OpenAI-compatible Chat Completions API（`deepseek-chat` / `deepseek-reasoner`）。
+- **代码搜索**：内置 `search`（ripgrep + Python fallback）和 `glob` 工具，无需开 shell 即可搜索代码。
+- **补丁式编辑**：`patch_file` 工具接受 unified diff，比整文件回传省 10× token。
+- **DeepSeek 推理模式**：`--reasoning` 启用深度思考，复杂架构分析和调试更强。
+- **AGENTS.md 项目指令**：自动读取项目根目录的 `AGENTS.md`，让模型了解你的代码规范。
+- **配置文件**：`~/.deepseek-cli/config.toml` 持久化偏好，不用每次敲 flag。
+- **Codex 风格审批模式**：`suggest`（只读）/ `auto-edit`（自动改文件，shell 需确认）/ `full-auto`（全自动）。
+- **Token 用量统计**：`/cost` 命令实时显示 token 消耗和估算费用。
+
+### 交互体验
 - 终端窗口式交互界面，显示进度、状态、工具调用和最终回复。
-- 支持流式输出模型回复，任务执行时可以看到回复逐步生成。
-- 支持多轮对话，默认最多 128 个自动工具步骤，并按约 1,000,000 字符上下文预算裁剪历史，减少长任务过早停止。
-- 自动工具调用：读文件、写文件、替换文本、列目录、运行 shell 命令。
-- 写文件和替换文件前显示 unified diff 预览，并等待批准。
+- 流式输出模型回复，任务执行时可以看到回复逐步生成。
+- 真正的 split-pane 全屏 TUI：上方执行区，下方交互区和输入框，支持鼠标滚动。
+- 内置 `default`、`ocean`、`mono`、`high-contrast` 四套 TUI 主题。
+- Codex CLI 风格紧凑输出：默认只显示状态和摘要，长工具结果折叠，`F4` 展开。
+- 全屏 TUI 中任务后台执行，执行过程中仍可输入 `/status`、`/cancel`、`/review`、`/cost`。
+
+### 安全与控制
+- 默认工作区沙箱，防止文件工具越权读写工作区之外的路径。
+- 命令白名单/黑名单，细粒度 shell 权限控制。
+- 项目级策略**只能收紧不能放宽**，恶意仓库无法通过 policy.json 提权。
+- 写文件和替换文件前显示 unified diff 预览并等待批准。
+- 原子写入（tempfile + os.replace），崩溃不损坏文件。
+- Windows CRLF 换行符完整保留，不再产生整文件伪 diff。
+- API Key 标记 `repr=False`，traceback 不泄密钥。
+
+### 工作流
 - Git 状态感知、自动创建分支、提交、推送并创建 GitHub PR。
 - 会话持久化和历史恢复，支持按名称保存上下文。
-- 会话列表、全文搜索和任务回放，可从 CLI 或交互界面检索并加载历史任务。
-- 默认工作区沙箱，防止文件工具越权读写工作区之外的路径。
-- 命令白名单/黑名单，支持更细粒度的 shell 权限控制。
-- 输入历史、Ctrl+D 退出、Ctrl+L 清屏、可滚动日志和多文件 review 视图。
-- 真正的 split-pane 全屏 TUI：上方是执行区，下方是交互区和输入框，并启用鼠标滚动。
-- 内置 `default`、`ocean`、`mono`、`high-contrast` 四套 TUI 主题。
-- 全屏 TUI 中任务在后台执行，执行过程中仍可输入 `/status`、`/cancel`、`/review`、`/expand`、`/compact`，也可以直接在界面里批准或拒绝工具调用。
-- Codex CLI 风格紧凑输出：默认只显示状态和摘要，长工具结果折叠保存，用快捷键或命令展开。
-- 按项目保存权限策略，团队项目可以复用同一套安全配置。
-- 补丁支持 hunk 级别逐段接受或拒绝，也支持内置行级 diff 编辑，不再依赖外部编辑器。
-- 可以在明确授权后按需检测和安装本机缺失工具，并根据 Windows/macOS/Linux 自动选择可用包管理器。
-- 跨平台安装脚本、`--doctor` 环境检查、`--self-update` 自更新，以及 Windows/macOS/Linux 单文件二进制构建 workflow。
-- GitHub release notes 自动生成，PyPI/Homebrew/Scoop/winget 发布辅助脚本。
-- 默认在执行 shell、写文件、Git 提交或 PR 前询问确认；可用 `--yes` 开启全自动模式。
-- 支持单次任务模式，也支持进入交互式会话。
-- 使用 Python 标准库完成 API 请求，运行时仅依赖 `rich`、`prompt-toolkit` 两个轻量依赖。
+- 会话列表、全文搜索和任务回放。
+- 跨平台安装脚本、`--doctor` 环境检查、`--self-update` 自更新。
+- Quiet 模式（`-q`）适合脚本和 CI 集成。
 
 ## 安装
 
@@ -218,13 +229,14 @@ deepseek --sandbox unrestricted
 进入 `deepseek` 后可以使用这些命令：
 
 - `/help`：显示帮助。
+- `/cost`：显示当前会话的 token 用量和估算费用。
 - `/clear`：清空当前对话上下文。
 - `/sessions [关键词]`：列出或搜索已保存会话。
 - `/replay NAME`：把指定会话加载到当前对话，可继续执行后续任务。
 - `/logs`：打开可滚动日志视图。
 - `/review`：打开当前 Git 多文件 diff review 视图。
 - `/status`：查看当前任务是否还在运行以及工具步进度。
-- `/cancel`：请求取消当前任务，通常会在当前模型请求或工具调用返回后停止。
+- `/cancel`：请求取消当前任务。
 - `/compact`：切回紧凑输出模式。
 - `/expand`：展开完整工具输出。
 - `/exit` 或 `/quit`：退出。
@@ -246,15 +258,18 @@ deepseek --sandbox unrestricted
 
 DeepSeek 可以自动调用这些本地工具：
 
-- `shell`：在当前工作区运行命令。
-- `read_file`：按块分页读取 UTF-8 文本文件，默认单页 100,000 字符，返回 `offset`、`end_offset`、`file_size_bytes`、`has_more` 和 `next_offset`；不会先把整个文件载入内存，并会拒绝包含 NUL 字节的二进制文件。
-- `write_file`：写入 UTF-8 文本文件，并自动创建父目录。
-- `replace_in_file`：在文件中替换精确文本。
+- `shell`：在当前工作区运行命令（输出自动截断至 16KB，防 OOM）。
+- `read_file`：按块分页读取 UTF-8 文本文件，返回 `offset`、`has_more`、`next_offset`。
+- `write_file`：写入 UTF-8 文本文件（原子写入，崩溃不损坏）。
+- `replace_in_file`：在文件中替换精确文本（拒绝空 `old` 参数）。
+- **`patch_file`**：应用 unified diff 补丁，比 write_file 省 10× token。
 - `list_dir`：列出目录内容。
-- `apply_file_edits`：一次性提交多文件完整内容编辑，并显示合并 diff 审批。
+- **`search`**：正则搜索文件内容（ripgrep 优先，Python fallback），返回 file:line:content。
+- **`glob`**：按 glob 模式查找文件（如 `src/**/*.py`）。
+- `apply_file_edits`：一次性提交多文件完整内容编辑，支持 hunk 级审批。
 - `check_tool`：检查本机是否存在某个可执行工具。
-- `install_tool`：在明确允许后安装缺失工具；默认会按操作系统自动选择 `winget`、`scoop`、`choco`、`brew`、`apt`、`dnf`、`pacman`、`zypper`、`npm` 或 `pip`。
-- `git_diff`：显示当前多文件 Git diff，供 review。
+- `install_tool`：在明确允许后安装缺失工具。
+- `git_diff`：显示当前多文件 Git diff。
 - `git_status`：查看当前 Git 分支和工作树状态。
 - `git_create_branch`：创建并切换到新分支。
 - `git_commit`：暂存指定文件并提交。
@@ -264,11 +279,14 @@ DeepSeek 可以自动调用这些本地工具：
 
 ## 权限和沙箱
 
-审批模式：
+审批模式（对标 Codex CLI）：
 
-- `--approval ask`：默认模式，危险操作前询问确认。
-- `--approval auto` 或 `--yes`：自动批准工具执行。
-- `--approval read-only`：禁用写文件、shell、Git 提交和 PR 等变更操作。
+- `--approval suggest`：只读模式，模型只能读文件和搜索，不能修改任何东西。
+- `--approval auto-edit`：自动批准文件编辑，shell 命令仍需确认。**日常推荐**。
+- `--approval full-auto` 或 `--yes`：全自动模式，所有工具自动批准（在沙箱内）。
+- `--approval read-only`：等同于 suggest（兼容旧写法）。
+- `--approval ask`：等同于默认行为（兼容旧写法）。
+- `--approval auto`：等同于 full-auto（兼容旧写法）。
 
 沙箱模式：
 
@@ -283,6 +301,8 @@ Shell 控制：
 - `--allow-install-tools`：允许 `install_tool` 安装缺失工具。
 - `--save-policy`：把当前有效权限策略保存到项目。
 - `--show-policy`：打印当前有效权限策略。
+
+> **安全说明**：项目级 `.deepseek-cli/policy.json` 只能收紧权限，不能放宽。恶意仓库无法通过 policy.json 提权到 full-auto 或 unrestricted。
 
 白名单优先约束可执行命令集合，黑名单用于拦截明确不希望模型执行的命令。复合命令中的每一段都会检查，例如 `python --version && git status` 会同时检查 `python` 和 `git`。命令名按可执行文件名识别，并兼容 Windows 的 `.exe`、`.cmd`、`.bat`、`.com` 后缀。
 
@@ -341,16 +361,93 @@ gh auth status
 
 ## 配置项
 
-环境变量：
+### 配置文件
+
+支持 `~/.deepseek-cli/config.toml`（用户级）和 `.deepseek-cli/config.toml`（项目级）：
+
+```toml
+# ~/.deepseek-cli/config.toml
+model = "deepseek-chat"
+approval = "auto-edit"
+theme = "dark"
+sandbox = "workspace"
+max_steps = 64
+temperature = 0.2
+
+[reasoning]
+enabled = false
+model = "deepseek-reasoner"
+thinking_budget = 4096
+
+[shell]
+allow = ["git", "npm", "python", "pytest", "ruff"]
+deny = ["rm -rf", "sudo", "format"]
+```
+
+优先级：CLI 参数 > 环境变量 > 项目配置 > 用户配置 > 默认值。
+
+### AGENTS.md 项目指令
+
+在项目根目录放置 `AGENTS.md`（或 `DEEPSEEK.md`），CLI 启动时自动读取并注入系统提示词：
+
+```markdown
+# AGENTS.md
+
+## 代码规范
+- 使用 Python 3.10+ 类型标注
+- 测试用 pytest，不用 unittest
+- 提交信息用英文，遵循 Conventional Commits
+
+## 构建命令
+- 安装：`pip install -e ".[dev]"`
+- 测试：`pytest tests/ -q`
+- Lint：`ruff check src/ tests/`
+
+## 架构说明
+- src/deepseek_cli/agent.py：代理循环
+- src/deepseek_cli/tools.py：工具实现
+- src/deepseek_cli/ui.py：TUI 界面
+```
+
+### 环境变量
 
 - `DEEPSEEK_API_KEY`：必填，DeepSeek API Key。
 - `DEEPSEEK_BASE_URL`：可选，默认 `https://api.deepseek.com`。
-- `DEEPSEEK_MODEL`：可选，默认 `deepseek-v4-flash`。
-- `DEEPSEEK_THEME`：可选，TUI 主题，可设为 `default`、`ocean`、`mono` 或 `high-contrast`。
+- `DEEPSEEK_MODEL`：可选，默认 `deepseek-chat`。
+- `DEEPSEEK_THEME`：可选，TUI 主题。
 
-命令行参数会覆盖环境变量。
+### DeepSeek 推理模式
 
-API 稳定性相关参数：
+复杂任务（架构分析、疑难 bug、多文件重构）可启用推理模式：
+
+```bash
+# 使用 deepseek-reasoner 模型，带思考过程
+deepseek --reasoning "分析这个项目的架构瓶颈并给出重构方案"
+
+# 自定义思考预算
+deepseek --reasoning --thinking-budget 8192 "调试这个并发死锁问题"
+```
+
+推理模式会显示模型的思考过程（reasoning_content），帮助你理解它的分析逻辑。
+
+### 费用统计
+
+交互模式中输入 `/cost` 查看当前会话的 token 用量：
+
+```
+┌ usage & cost ─────────────────────┐
+│ Requests: 12                      │
+│ Prompt tokens: 45,230             │
+│ Completion tokens: 8,112          │
+│ Total tokens: 53,342              │
+│ Estimated cost: ¥0.0615           │
+│ (deepseek-chat)                   │
+└───────────────────────────────────┘
+```
+
+DeepSeek 定价参考：chat 输入 ¥1/百万 token，输出 ¥2/百万 token；reasoner 输入 ¥4，输出 ¥16。
+
+### API 稳定性参数
 
 - `--api-timeout SECONDS`：单次 API 请求超时，默认 120 秒。
 - `--api-retries COUNT`：HTTP 429、5xx 和网络错误的重试次数，默认 3 次。

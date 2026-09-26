@@ -22,8 +22,22 @@ Working rules:
 - When useful, briefly explain current progress before calling tools.
 - For large files, read them page by page with read_file offset/limit.
 - If read_file returns has_more=true, continue with next_offset when the missing content matters.
-- Do not repeatedly read the same truncated page; advance offset, narrow the range, or use shell search.
+- Do not repeatedly read the same truncated page; advance offset, narrow the range, or use search.
+- Prefer the search tool over shell grep/rg for code searching (faster, no shell needed).
+- Prefer patch_file over write_file for small edits (saves tokens, reduces hallucination risk).
 """
+
+
+def build_system_prompt(agents_md: str = "") -> str:
+    """Build the system prompt, optionally appending project instructions from AGENTS.md."""
+    prompt = SYSTEM_PROMPT
+    if agents_md:
+        prompt += (
+            "\n\n---\n"
+            "Project instructions (from AGENTS.md):\n\n"
+            f"{agents_md}\n"
+        )
+    return prompt
 
 
 @dataclass
@@ -59,6 +73,7 @@ class DeepSeekAgent:
     config: AgentConfig
     events: AgentEventHandler | None = None
     messages: list[dict[str, Any]] = field(default_factory=list)
+    agents_md: str = ""  # project instructions from AGENTS.md
     # Usage tracking for /cost command
     total_prompt_tokens: int = field(default=0, init=False)
     total_completion_tokens: int = field(default=0, init=False)
@@ -66,7 +81,7 @@ class DeepSeekAgent:
 
     def __post_init__(self) -> None:
         if not self.messages or self.messages[0].get("role") != "system":
-            self.messages.insert(0, {"role": "system", "content": SYSTEM_PROMPT})
+            self.messages.insert(0, {"role": "system", "content": build_system_prompt(self.agents_md)})
 
     def get_usage_summary(self) -> str:
         """Return a human-readable summary of token usage for /cost command."""
