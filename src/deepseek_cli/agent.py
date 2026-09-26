@@ -47,6 +47,7 @@ class AgentConfig:
     max_context_chars: int = 200_000  # ~50-70K tokens, safe for 64K-128K models
     temperature: float = 0.2
     stream: bool = True
+    thinking_budget: int = 4096  # max thinking tokens for reasoning mode
     cancel_check: Callable[[], bool] | None = None
 
 
@@ -122,6 +123,9 @@ class DeepSeekAgent:
                 "tool_choice": "auto",
                 "temperature": self.config.temperature,
             }
+            # DeepSeek reasoning mode: pass thinking budget when using reasoner model
+            if "reasoner" in (getattr(self.client, "model", "") or "").lower():
+                payload["thinking"] = {"type": "enabled", "budget_tokens": self.config.thinking_budget}
             message = self._stream_message(payload) if self.config.stream else self._chat_message(payload)
             self.messages.append(self._normalize_assistant_message(message))
 

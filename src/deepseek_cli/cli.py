@@ -204,9 +204,12 @@ def create_agent(args: argparse.Namespace) -> DeepSeekAgent:
     )
     if args.save_policy:
         save_project_policy(cwd, policy)
+    # auto-edit mode: auto-approve file edits, still ask for shell
+    is_auto_edit = (raw_approval == "auto-edit")
     tools = ToolExecutor(
         cwd,
-        auto_approve=args.yes,
+        auto_approve=args.yes or raw_approval == "full-auto",
+        auto_edit=is_auto_edit,
         ask=RichToolConfirmer(),
         approve_diff=RichDiffConfirmer(),
         approve_file_edits=RichFileEditConfirmer(),
@@ -225,6 +228,7 @@ def create_agent(args: argparse.Namespace) -> DeepSeekAgent:
             max_context_chars=args.max_context_chars,
             temperature=args.temperature,
             stream=not args.no_stream,
+            thinking_budget=args.thinking_budget,
         ),
         messages=messages,
         agents_md=file_config.agents_md,
@@ -360,7 +364,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if args.prompt:
-        if not args.plain:
+        if args.quiet:
+            # Quiet mode: no events, just the final answer to stdout
+            pass
+        elif not args.plain:
             from rich.console import Console
 
             console = Console()
@@ -372,9 +379,9 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         save_session(agent, args.session, save_sensitive=args.save_sensitive)
         if answer:
-            print(f"\n{answer}")
+            print(f"\n{answer}" if not args.quiet else answer)
         return 0
-    if args.plain:
+    if args.quiet or args.plain:
         return run_interactive(agent, session_name=args.session, save_sensitive=args.save_sensitive)
     if args.fullscreen:
         code = run_split_pane_interactive(

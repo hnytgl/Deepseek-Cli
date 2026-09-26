@@ -407,6 +407,7 @@ class ToolExecutor:
         cwd: Path,
         *,
         auto_approve: bool = False,
+        auto_edit: bool = False,
         ask: Callable[[str], bool] | None = None,
         approve_diff: Callable[[str, str], bool] | None = None,
         approve_file_edits: Callable[[list[tuple[Path, str]]], list[bool]] | None = None,
@@ -416,6 +417,8 @@ class ToolExecutor:
         self.cwd = cwd.resolve()
         self.policy = policy or PermissionConfig(approval="auto" if auto_approve else "ask")
         self.auto_approve = auto_approve or self.policy.auto_approve
+        # auto-edit: auto-approve file edits (write/replace/patch), still ask for shell
+        self.auto_edit = auto_edit
         self.ask = ask or self._default_ask
         self.approve_diff = approve_diff
         self.approve_file_edits = approve_file_edits
@@ -458,7 +461,7 @@ class ToolExecutor:
             raise ToolError("User rejected tool execution.")
 
     def _confirm_diff(self, prompt: str, diff: str) -> None:
-        if self.auto_approve:
+        if self.auto_approve or self.auto_edit:
             return
         if self.approve_diff:
             approved = self.approve_diff(prompt, diff)

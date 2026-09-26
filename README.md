@@ -8,6 +8,39 @@
 
 **中国人自己的 AI 编程终端** —— 用 DeepSeek 的超低价格获得 Codex CLI 级别的开发体验。
 
+## 更新日志
+
+### v0.9.0（2026-09-26）
+
+**对标 Codex CLI 的重大升级：**
+
+- **配置文件**：`~/.deepseek-cli/config.toml` + 项目级覆盖，偏好持久化，不用每次敲 flag
+- **AGENTS.md 项目指令**：自动读取项目根目录的 `AGENTS.md` / `DEEPSEEK.md`，注入系统提示词，让模型了解你的代码规范和构建命令
+- **Codex 风格审批模式**：`suggest`（只读）/ `auto-edit`（自动改文件，shell 需确认）/ `full-auto`（全自动）
+- **DeepSeek 推理模式**：`--reasoning` 切换 deepseek-reasoner，`--thinking-budget` 控制思考深度
+- **代码搜索工具**：`search`（ripgrep + Python fallback）和 `glob`，无需开 shell 即可搜索代码
+- **补丁式编辑**：`patch_file` 接受 unified diff，比整文件回传省 10× token
+- **费用统计**：`/cost` 命令实时显示 token 用量和估算费用（¥）
+- **静默模式**：`-q/--quiet` 适合脚本和 CI 集成
+- **上下文管理**：`max_context_chars` 降到 200K，防止长会话撞 API 400
+
+**安全加固：**
+
+- 原子写入（tempfile + os.replace），崩溃不损坏文件
+- Windows CRLF 换行符完整保留，不再产生整文件伪 diff
+- `replace_in_file` 拒绝空 `old` 参数，防止文件被摧毁
+- 项目级 policy.json 只能收紧不能放宽，堵死 clone 恶意仓库即 RCE
+- 全屏模式审批死锁修复（event.wait 加超时轮询）
+- Rich 交互模式 API 错误不再崩 TUI
+- `api_key` 标记 `repr=False`，traceback 不泄密钥
+- `git add --` 防参数注入
+- shell 输出截断至 16KB，防 OOM 和 token 爆炸
+- 会话恢复后确保 system prompt 存在
+
+### v0.8.1
+
+- 初始发布：Codex 风格编程代理，13 个工具，split-pane TUI，会话持久化
+
 ## 功能特性
 
 ### 核心能力
