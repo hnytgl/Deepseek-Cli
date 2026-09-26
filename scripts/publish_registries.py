@@ -84,7 +84,7 @@ def main() -> int:
     parser.add_argument("--homebrew-tap", help="Path to a checked out Homebrew tap repository.")
     parser.add_argument("--scoop-bucket", help="Path to a checked out Scoop bucket repository.")
     parser.add_argument("--winget-pkgs", help="Path to a checked out winget-pkgs repository.")
-    parser.add_argument("--version", default="0.8.0", help="Version used in registry PR branch names and status checks.")
+    parser.add_argument("--version", default="0.9.0", help="Version used in registry PR branch names and status checks.")
     parser.add_argument("--open-pr", action="store_true", help="Commit, push, and open PRs in the registry repositories.")
     parser.add_argument("--check-status", action="store_true", help="Check whether the version appears in PyPI/Homebrew/Scoop/winget.")
     parser.add_argument("--dry-run", action="store_true")

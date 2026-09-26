@@ -538,9 +538,9 @@ deepseek --self-update "git+https://github.com/hnytgl/deepseek-cli.git"
 
 ```powershell
 python scripts/update_release_hashes.py `
-  --version 0.8.1 `
-  --homebrew-tar .\dist\deepseek-cli-v0.8.1.tar.gz `
-  --scoop-zip .\dist\deepseek-cli-v0.8.1.zip `
+  --version 0.9.0 `
+  --homebrew-tar .\dist\deepseek-cli-v0.9.0.tar.gz `
+  --scoop-zip .\dist\deepseek-cli-v0.9.0.zip `
   --winget-windows-zip .\dist\deepseek-windows-x64.zip `
   --check
 ```
@@ -548,7 +548,7 @@ python scripts/update_release_hashes.py `
 创建带自动 release notes 的 GitHub release：
 
 ```powershell
-python scripts/create_release.py 0.8.1 --draft
+python scripts/create_release.py 0.9.0 --draft
 ```
 
 发布到真实 registry 的辅助入口：
@@ -569,14 +569,14 @@ python scripts/publish_registries.py `
   --homebrew-tap C:\path\to\homebrew-tap `
   --scoop-bucket C:\path\to\scoop-bucket `
   --winget-pkgs C:\path\to\winget-pkgs `
-  --version 0.8.1 `
+  --version 0.9.0 `
   --open-pr
 ```
 
 检查 PyPI/Homebrew/Scoop/winget 是否已经能检索到指定版本：
 
 ```powershell
-python scripts/publish_registries.py --check-status --version 0.8.1
+python scripts/publish_registries.py --check-status --version 0.9.0
 ```
 
 ## 和 Codex CLI 看齐的方向
