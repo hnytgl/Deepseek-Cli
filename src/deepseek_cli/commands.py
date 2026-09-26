@@ -28,6 +28,7 @@ class Command:
 COMMANDS: list[Command] = [
     Command("/help", "显示帮助"),
     Command("/cost", "显示 token 用量和估算费用"),
+    Command("/undo", "撤销上一次文件修改（恢复到编辑前 checkpoint）"),
     Command("/clear", "清空当前对话上下文"),
     Command("/sessions", "列出或搜索已保存会话", args="[query]"),
     Command("/replay", "加载指定会话到当前对话", args="NAME"),

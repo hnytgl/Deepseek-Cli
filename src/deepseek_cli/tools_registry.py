@@ -243,6 +243,23 @@ REGISTRY: list[ToolSpec] = [
         },
         needs_shell=True,
     ),
+    ToolSpec(
+        name="web_search",
+        description=(
+            "Search the web for current information. Returns top results with titles, "
+            "URLs and snippets. Useful for looking up documentation, APIs, error messages."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query."},
+                "max_results": {"type": "integer", "description": "Max results to return. Defaults to 5."},
+            },
+            "required": ["query"],
+        },
+        read_only=True,
+        needs_confirm=False,
+    ),
 ]
 
 # Lookup tables built from registry

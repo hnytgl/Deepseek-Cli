@@ -143,11 +143,40 @@ class DeepSeekAgent:
             if not tool_calls:
                 return content or final_text
 
-            for tool_call in tool_calls:
+            # Concurrent execution for read-only tools, serial for write tools
+            from .tools_registry import READ_ONLY_TOOLS
+            read_only_calls = []
+            write_calls = []
+            for tc in tool_calls:
+                fn_name = (tc.get("function") or {}).get("name", "")
+                if fn_name in READ_ONLY_TOOLS:
+                    read_only_calls.append(tc)
+                else:
+                    write_calls.append(tc)
+
+            # Execute read-only tools concurrently
+            if len(read_only_calls) > 1:
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+                with ThreadPoolExecutor(max_workers=min(4, len(read_only_calls))) as pool:
+                    futures = {pool.submit(self._execute_tool_call, tc): tc for tc in read_only_calls}
+                    results = {}
+                    for future in as_completed(futures):
+                        tc = futures[future]
+                        results[id(tc)] = future.result()
+                # Append in original order
+                for tc in read_only_calls:
+                    self.messages.append(results[id(tc)])
+            else:
+                for tc in read_only_calls:
+                    if self._cancelled():
+                        return "Cancelled by user."
+                    self.messages.append(self._execute_tool_call(tc))
+
+            # Execute write tools serially (order matters)
+            for tc in write_calls:
                 if self._cancelled():
                     return "Cancelled by user."
-                tool_message = self._execute_tool_call(tool_call)
-                self.messages.append(tool_message)
+                self.messages.append(self._execute_tool_call(tc))
 
         return "Stopped because max tool steps were reached. Please retry with a narrower request."
 

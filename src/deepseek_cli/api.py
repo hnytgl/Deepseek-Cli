@@ -13,6 +13,19 @@ from typing import Any
 DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_MODEL = "deepseek-v4-flash"
 
+# Known providers and their default base URLs
+PROVIDERS = {
+    "deepseek": "https://api.deepseek.com",
+    "ollama": "http://localhost:11434/v1",
+    "lmstudio": "http://localhost:1234/v1",
+    "openai": "https://api.openai.com/v1",
+    "openrouter": "https://openrouter.ai/api/v1",
+    "anthropic": "https://api.anthropic.com/v1",
+}
+
+# Providers that don't require an API key
+LOCAL_PROVIDERS = {"ollama", "lmstudio"}
+
 
 class DeepSeekAPIError(RuntimeError):
     """Raised when the DeepSeek API returns an error or malformed response."""
@@ -36,14 +49,32 @@ class DeepSeekClient:
         model: str | None = None,
         timeout: float = 120,
         max_retries: int = 3,
+        provider: str | None = None,
     ) -> "DeepSeekClient":
-        resolved_key = api_key or os.getenv("DEEPSEEK_API_KEY")
+        # Resolve provider → base_url mapping
+        resolved_provider = provider or os.getenv("DEEPSEEK_PROVIDER", "deepseek")
+        if base_url is None:
+            base_url = PROVIDERS.get(resolved_provider, "")
+        if not base_url:
+            base_url = os.getenv("DEEPSEEK_BASE_URL") or DEFAULT_BASE_URL
+
+        # Local providers (ollama, lmstudio) don't require an API key
+        resolved_key = api_key or os.getenv("DEEPSEEK_API_KEY") or ""
+        if not resolved_key and resolved_provider not in LOCAL_PROVIDERS:
+            # Check if base_url points to a known local provider
+            is_local = any(base_url.rstrip("/").startswith(url.rstrip("/")) for url in
+                          (PROVIDERS["ollama"], PROVIDERS["lmstudio"]))
+            if not is_local:
+                raise DeepSeekAPIError(
+                    "DEEPSEEK_API_KEY is not set. Export it or pass --api-key.\n"
+                    "For local models (Ollama/LMStudio), use --provider ollama or set base_url."
+                )
         if not resolved_key:
-            raise DeepSeekAPIError("DEEPSEEK_API_KEY is not set.")
+            resolved_key = "not-needed"  # placeholder for local providers
 
         return cls(
             api_key=resolved_key,
-            base_url=(base_url or os.getenv("DEEPSEEK_BASE_URL") or DEFAULT_BASE_URL).rstrip("/"),
+            base_url=base_url.rstrip("/"),
             model=model or os.getenv("DEEPSEEK_MODEL") or DEFAULT_MODEL,
             timeout=timeout,
             max_retries=max_retries,

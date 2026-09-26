@@ -56,6 +56,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cwd", default=None, help="Workspace directory. Defaults to the directory where deepseek is launched.")
     parser.add_argument("--model", default=None, help=f"DeepSeek model. Defaults to env or {DEFAULT_MODEL}.")
     parser.add_argument("--base-url", default=None, help="DeepSeek API base URL.")
+    parser.add_argument(
+        "--provider", default=None,
+        choices=["deepseek", "ollama", "lmstudio", "openai", "openrouter", "anthropic"],
+        help="API provider. Local providers (ollama/lmstudio) don't need an API key.",
+    )
     parser.add_argument("--api-key", default=None, help="DeepSeek API key. Prefer DEEPSEEK_API_KEY.")
     parser.add_argument("--api-timeout", type=positive_float, default=120, help="API request timeout in seconds.")
     parser.add_argument("--api-retries", type=nonnegative_int, default=3, help="Retries for HTTP 429, 5xx, and network errors.")
@@ -108,6 +113,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--temperature", type=float, default=0.2, help="Sampling temperature.")
     parser.add_argument("-q", "--quiet", action="store_true", help="Quiet mode: minimal output, suitable for scripting.")
+    parser.add_argument("--json", dest="json_output", action="store_true", help="Output result as JSON (for scripting/CI). Implies --quiet.")
     parser.add_argument("--plain", action="store_true", help="Use plain input/output instead of the Rich TUI.")
     parser.add_argument("--fullscreen", action="store_true", help="Use an alternate full-screen terminal surface.")
     parser.add_argument(
@@ -132,6 +138,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--expanded-output", action="store_true", help="Show full tool output by default instead of compact summaries.")
     parser.add_argument("--doctor", action="store_true", help="Check local installation requirements.")
+    parser.add_argument(
+        "--completions", metavar="SHELL", choices=["bash", "zsh", "fish"],
+        help="Print shell completion script and exit. Append to your shell rc file.",
+    )
     parser.add_argument(
         "--self-update",
         nargs="?",
@@ -165,6 +175,7 @@ def create_agent(args: argparse.Namespace) -> DeepSeekAgent:
         model=model,
         timeout=args.api_timeout,
         max_retries=args.api_retries,
+        provider=args.provider,
     )
 
     # Map Codex-style approval modes to internal policy
@@ -321,6 +332,10 @@ def resolve_cwd(value: str | None) -> Path:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.completions:
+        from .completions import get_completion_script
+        print(get_completion_script(args.completions))
+        return 0
     if args.doctor:
         report = run_doctor()
         print(report.output)
@@ -378,7 +393,20 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Error: {exc}", file=sys.stderr)
             return 2
         save_session(agent, args.session, save_sensitive=args.save_sensitive)
-        if answer:
+        if args.json_output:
+            import json as _json
+            result = {
+                "answer": answer or "",
+                "model": agent.client.model,
+                "usage": {
+                    "prompt_tokens": agent.total_prompt_tokens,
+                    "completion_tokens": agent.total_completion_tokens,
+                    "total_requests": agent.total_requests,
+                },
+                "modified_files": [str(f) for f in agent.tools.modified_files],
+            }
+            print(_json.dumps(result, ensure_ascii=False))
+        elif answer:
             print(f"\n{answer}" if not args.quiet else answer)
         return 0
     if args.quiet or args.plain:

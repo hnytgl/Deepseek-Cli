@@ -73,6 +73,12 @@ class ToolExecutor:
         self.approve_diff = approve_diff
         self.approve_file_edits = approve_file_edits
         self.approve_hunks = approve_hunks
+        # Checkpoint: track files modified in this session for /undo
+        self._modified_files: list[Path] = []
+        self._checkpoint_commit: str | None = None
+        # Permission memory: tools/commands approved for this session
+        self._session_allowed_commands: set[str] = set()
+        self._session_allowed_tools: set[str] = set()
 
     def run(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         tools: dict[str, Callable[[dict[str, Any]], ToolResult]] = {
@@ -92,6 +98,7 @@ class ToolExecutor:
             "search": self._search,
             "glob": self._glob,
             "patch_file": self._patch_file,
+            "web_search": self._web_search,
         }
         if name not in tools:
             return ToolResult(False, f"Unknown tool: {name}")
@@ -104,11 +111,73 @@ class ToolExecutor:
         reply = input(f"{prompt} [y/N] ").strip().lower()
         return reply in {"y", "yes"}
 
-    def _confirm(self, prompt: str) -> None:
+    def _confirm(self, prompt: str, *, tool_name: str = "", command: str = "") -> None:
         if self.auto_approve:
+            return
+        # Permission memory: skip confirmation for session-approved tools/commands
+        if tool_name and tool_name in self._session_allowed_tools:
+            return
+        if command and command in self._session_allowed_commands:
             return
         if not self.ask(prompt):
             raise ToolError("User rejected tool execution.")
+
+    def allow_tool_for_session(self, tool_name: str) -> None:
+        """Remember that this tool is approved for the rest of the session."""
+        self._session_allowed_tools.add(tool_name)
+
+    def allow_command_for_session(self, command: str) -> None:
+        """Remember that this command is approved for the rest of the session."""
+        self._session_allowed_commands.add(command)
+
+    # ------------------------------------------------------------------
+    # Checkpoint / Undo support
+    # ------------------------------------------------------------------
+
+    def create_checkpoint(self) -> str | None:
+        """Create a git stash checkpoint before file modifications.
+
+        Returns the stash ref (e.g. 'stash@{0}') or None if not in a git repo
+        or nothing to stash.
+        """
+        try:
+            result = subprocess.run(
+                ["git", "stash", "push", "-u", "-m", "deepseek-cli checkpoint"],
+                cwd=self.cwd, text=True, capture_output=True, timeout=30,
+            )
+            if result.returncode == 0 and "No local changes" not in result.stdout:
+                self._checkpoint_commit = "stash@{0}"
+                return self._checkpoint_commit
+        except (subprocess.TimeoutExpired, OSError, FileNotFoundError):
+            pass
+        return None
+
+    def undo_checkpoint(self) -> ToolResult:
+        """Restore the workspace to the last checkpoint (git stash pop)."""
+        if not self._checkpoint_commit:
+            return ToolResult(False, "No checkpoint to undo. Checkpoints are created automatically before file edits.")
+        try:
+            result = subprocess.run(
+                ["git", "stash", "pop"],
+                cwd=self.cwd, text=True, capture_output=True, timeout=30,
+            )
+            if result.returncode == 0:
+                self._checkpoint_commit = None
+                self._modified_files.clear()
+                return ToolResult(True, "Undone: workspace restored to last checkpoint.")
+            return ToolResult(False, f"git stash pop failed: {result.stderr.strip()}")
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            return ToolResult(False, f"Undo failed: {exc}")
+
+    def track_modified_file(self, path: Path) -> None:
+        """Track a file modified in this session (for /undo and git commit)."""
+        if path not in self._modified_files:
+            self._modified_files.append(path)
+
+    @property
+    def modified_files(self) -> list[Path]:
+        """Files modified during this session."""
+        return list(self._modified_files)
 
     def _confirm_diff(self, prompt: str, diff: str) -> None:
         if self.auto_approve or self.auto_edit:
@@ -230,7 +299,9 @@ class ToolExecutor:
         old = _read_source(path) if path.exists() else ""
         diff = _unified_diff(path, old, content)
         self._confirm_diff(f"Apply write to file: {path}", diff or f"Create empty file: {path}")
+        self.create_checkpoint()
         _atomic_write(path, content)
+        self.track_modified_file(path)
         return ToolResult(True, f"Wrote {path} ({len(content)} chars).")
 
     def _replace_in_file(self, arguments: dict[str, Any]) -> ToolResult:
@@ -249,7 +320,9 @@ class ToolExecutor:
         else:
             updated = content.replace(old, new, int(count))
         self._confirm_diff(f"Apply replacement in file: {path}", _unified_diff(path, content, updated))
+        self.create_checkpoint()
         _atomic_write(path, updated)
+        self.track_modified_file(path)
         replacements = content.count(old) if count is None else min(content.count(old), int(count))
         return ToolResult(True, f"Updated {path}; replacements={replacements}.")
 
@@ -549,9 +622,66 @@ class ToolExecutor:
 
         diff = _unified_diff(path, original, updated)
         self._confirm_diff(f"Apply patch to file: {path}", diff)
+        self.create_checkpoint()
         _atomic_write(path, updated)
-        # Count changed lines for feedback
-        added = sum(1 for line in updated.splitlines() if line not in original.splitlines())
+        self.track_modified_file(path)
         return ToolResult(True, f"Patched {path} ({len(updated.splitlines())} lines total).")
+
+    def _web_search(self, arguments: dict[str, Any]) -> ToolResult:
+        """Search the web using DuckDuckGo HTML (no API key required)."""
+        import urllib.request
+        import urllib.parse
+
+        query = str(arguments["query"])
+        max_results = min(int(arguments.get("max_results") or 5), 10)
+
+        # Use DuckDuckGo lite HTML endpoint (no API key needed)
+        url = "https://html.duckduckgo.com/html/?q=" + urllib.parse.quote_plus(query)
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (compatible; DeepSeekCLI/0.9)"
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                html = resp.read().decode("utf-8", errors="replace")
+        except Exception as exc:
+            return ToolResult(False, f"Web search failed: {exc}")
+
+        # Parse results from DuckDuckGo HTML (simple regex extraction)
+        import re
+        results = []
+        # DuckDuckGo lite returns results in <a class="result__a" href="...">title</a>
+        for match in re.finditer(
+            r'<a[^>]+class="result__a"[^>]+href="([^"]*)"[^>]*>(.*?)</a>',
+            html, re.DOTALL
+        ):
+            link = match.group(1)
+            title = re.sub(r"<[^>]+>", "", match.group(2)).strip()
+            # DuckDuckGo wraps URLs in a redirect; extract actual URL
+            if "uddg=" in link:
+                link = urllib.parse.unquote(link.split("uddg=")[1].split("&")[0])
+            results.append({"title": title, "url": link})
+            if len(results) >= max_results:
+                break
+
+        # Extract snippets
+        snippets = re.findall(
+            r'<a[^>]+class="result__snippet"[^>]*>(.*?)</a>',
+            html, re.DOTALL
+        )
+        for i, snippet in enumerate(snippets[:len(results)]):
+            results[i]["snippet"] = re.sub(r"<[^>]+>", "", snippet).strip()[:200]
+
+        if not results:
+            return ToolResult(True, f"No results found for: {query}")
+
+        output_lines = [f"Web search results for: {query}\n"]
+        for i, r in enumerate(results, 1):
+            output_lines.append(f"{i}. {r['title']}")
+            output_lines.append(f"   {r['url']}")
+            if r.get("snippet"):
+                output_lines.append(f"   {r['snippet']}")
+            output_lines.append("")
+
+        return ToolResult(True, "\n".join(output_lines))
 
 

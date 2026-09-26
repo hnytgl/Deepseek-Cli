@@ -262,6 +262,11 @@ def _run_loop(
         if prompt == "/cost":
             console.print(Panel(agent.get_usage_summary(), title="usage & cost", border_style=theme.info))
             continue
+        if prompt == "/undo":
+            result = agent.tools.undo_checkpoint()
+            style = theme.success if result.ok else theme.error
+            console.print(f"[{style}]{result.output}[/{style}]")
+            continue
         if prompt == "/sessions" or prompt.startswith("/sessions "):
             query = prompt.removeprefix("/sessions").strip()
             records = store.search(query)
