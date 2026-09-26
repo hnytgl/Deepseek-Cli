@@ -84,6 +84,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Restrict file tools to the workspace by default.",
     )
+    parser.add_argument(
+        "--sandbox-mode",
+        choices=["auto", "none", "strict"],
+        default="auto",
+        help=(
+            "OS-level sandbox for shell commands. auto=use best available "
+            "(bwrap on Linux, seatbelt on macOS, restricted on Windows), "
+            "none=disable OS sandbox, strict=fail if unavailable."
+        ),
+    )
     parser.add_argument("--no-shell", action="store_true", help="Disable shell and PR tools.")
     parser.add_argument("--allow-install-tools", action="store_true", help="Allow install_tool to install missing tools.")
     parser.add_argument("--allow-command", action="append", default=[], help="Allow only this shell command. Repeatable.")
@@ -223,6 +233,11 @@ def create_agent(args: argparse.Namespace) -> DeepSeekAgent:
         save_project_policy(cwd, policy)
     # auto-edit mode: auto-approve file edits, still ask for shell
     is_auto_edit = (raw_approval == "auto-edit")
+
+    # OS-level sandbox for shell commands
+    from .sandbox import create_sandbox
+    os_sandbox = create_sandbox(cwd, mode=args.sandbox_mode)
+
     tools = ToolExecutor(
         cwd,
         auto_approve=args.yes or raw_approval == "full-auto",
@@ -232,6 +247,7 @@ def create_agent(args: argparse.Namespace) -> DeepSeekAgent:
         approve_file_edits=RichFileEditConfirmer(),
         approve_hunks=RichHunkConfirmer(),
         policy=policy,
+        sandbox=os_sandbox,
     )
     messages = []
     if args.resume or args.session:

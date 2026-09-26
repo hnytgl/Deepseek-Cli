@@ -63,6 +63,7 @@ class ToolExecutor:
         approve_file_edits: Callable[[list[tuple[Path, str]]], list[bool]] | None = None,
         approve_hunks: Callable[[list[PatchHunk]], list[HunkDecision]] | None = None,
         policy: PermissionConfig | None = None,
+        sandbox: Any | None = None,
     ) -> None:
         self.cwd = cwd.resolve()
         self.policy = policy or PermissionConfig(approval="auto" if auto_approve else "ask")
@@ -73,6 +74,8 @@ class ToolExecutor:
         self.approve_diff = approve_diff
         self.approve_file_edits = approve_file_edits
         self.approve_hunks = approve_hunks
+        # OS-level sandbox for shell commands
+        self.sandbox = sandbox
         # Checkpoint: track files modified in this session for /undo
         self._modified_files: list[Path] = []
         self._checkpoint_commit: str | None = None
@@ -203,7 +206,20 @@ class ToolExecutor:
             raise ToolError("timeout_seconds must be an integer between 1 and 600.") from exc
         timeout = max(1, min(timeout, 600))
         self.policy.check_command(command)
-        self._confirm(f"Run shell command: {command}")
+        self._confirm(f"Run shell command: {command}", tool_name="shell")
+
+        # Use OS-level sandbox if available
+        if self.sandbox and self.sandbox.available:
+            result = self.sandbox.run(command, timeout=timeout, cwd=self.cwd)
+            output = result.stdout
+            if result.stderr:
+                output += ("\n" if output else "") + result.stderr
+            output += f"\n[exit_code={result.returncode}]"
+            if result.sandboxed:
+                output += f" [sandbox={result.sandbox_type}]"
+            return ToolResult(result.returncode == 0, _truncate_output(output.strip()))
+
+        # Fallback: direct subprocess execution
         if platform.system() == "Windows":
             completed = subprocess.run(
                 ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],

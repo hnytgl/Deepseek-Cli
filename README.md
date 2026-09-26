@@ -10,6 +10,29 @@
 
 ## 更新日志
 
+### v1.0.0（2026-09-26）
+
+**全面对标 Codex CLI 的正式版本：**
+
+- **OS 级沙箱**：Linux bubblewrap 命名空间隔离 / macOS Seatbelt 配置 / Windows 受限进程 + 环境净化，`--sandbox-mode auto|none|strict`
+- **MCP 客户端**：支持接入外部 MCP Server（config.toml `[mcp_servers]` 配置），JSON-RPC over stdio，工具自动注册
+- **多 Provider**：`--provider deepseek|ollama|lmstudio|openai|openrouter|anthropic`，本地模型无需 API Key
+- **Profiles 多配置**：`--profile fast` / `--profile careful`，config.toml `[profiles.NAME]` 一键切换模型+审批+参数
+- **并发工具执行**：read_only 工具（search/glob/read_file/git_status）自动 ThreadPool 并发，多文件读取提速 3-5×
+- **Web 搜索**：内置 `web_search` 工具（DuckDuckGo，无需 API Key），模型可自主查文档
+- **编辑前 Checkpoint + /undo**：每次文件修改前自动 git stash，`/undo` 一键回滚
+- **权限记忆**：session 级工具/命令白名单，减少重复确认
+- **Shell 补全**：`deepseek --completions bash|zsh|fish`，覆盖全部 flag 和 choices
+- **JSON 输出**：`--json` 结构化输出（answer/model/usage/modified_files），CI/CD 管道友好
+- **代码搜索**：`search`（ripgrep + Python fallback）+ `glob` 工具，无需开 shell
+- **补丁式编辑**：`patch_file`（unified diff），比整文件回传省 10× token
+- **配置文件**：`~/.deepseek-cli/config.toml` + 项目级覆盖 + AGENTS.md 项目指令
+- **Codex 风格审批**：`suggest` / `auto-edit` / `full-auto` 三档
+- **DeepSeek 推理模式**：`--reasoning` + `--thinking-budget`（deepseek-v4-pro）
+- **费用统计**：`/cost` 实时 token 用量 + ¥ 估算
+- **架构重构**：tools.py 拆分为 registry + helpers + executor；CommandRegistry 三端共享
+- **安全加固**：原子写入、CRLF 保留、policy 禁提权、审批死锁修复、api_key repr 隐藏、shell 输出截断
+
 ### v0.9.0（2026-09-26）
 
 **对标 Codex CLI 的重大升级：**
@@ -538,9 +561,9 @@ deepseek --self-update "git+https://github.com/hnytgl/deepseek-cli.git"
 
 ```powershell
 python scripts/update_release_hashes.py `
-  --version 0.9.0 `
-  --homebrew-tar .\dist\deepseek-cli-v0.9.0.tar.gz `
-  --scoop-zip .\dist\deepseek-cli-v0.9.0.zip `
+  --version 1.0.0 `
+  --homebrew-tar .\dist\deepseek-cli-v1.0.0.tar.gz `
+  --scoop-zip .\dist\deepseek-cli-v1.0.0.zip `
   --winget-windows-zip .\dist\deepseek-windows-x64.zip `
   --check
 ```
@@ -548,7 +571,7 @@ python scripts/update_release_hashes.py `
 创建带自动 release notes 的 GitHub release：
 
 ```powershell
-python scripts/create_release.py 0.9.0 --draft
+python scripts/create_release.py 1.0.0 --draft
 ```
 
 发布到真实 registry 的辅助入口：
@@ -569,14 +592,14 @@ python scripts/publish_registries.py `
   --homebrew-tap C:\path\to\homebrew-tap `
   --scoop-bucket C:\path\to\scoop-bucket `
   --winget-pkgs C:\path\to\winget-pkgs `
-  --version 0.9.0 `
+  --version 1.0.0 `
   --open-pr
 ```
 
 检查 PyPI/Homebrew/Scoop/winget 是否已经能检索到指定版本：
 
 ```powershell
-python scripts/publish_registries.py --check-status --version 0.9.0
+python scripts/publish_registries.py --check-status --version 1.0.0
 ```
 
 ## 和 Codex CLI 看齐的方向
