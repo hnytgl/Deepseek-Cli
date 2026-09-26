@@ -5,7 +5,7 @@ import os
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
 from typing import Any
 
@@ -20,7 +20,7 @@ class DeepSeekAPIError(RuntimeError):
 
 @dataclass(frozen=True)
 class DeepSeekClient:
-    api_key: str
+    api_key: str = field(repr=False)
     base_url: str = DEFAULT_BASE_URL
     model: str = DEFAULT_MODEL
     timeout: float = 120

@@ -30,7 +30,7 @@ Working rules:
 class AgentConfig:
     cwd: Path
     max_steps: int = 128
-    max_context_chars: int = 1_000_000
+    max_context_chars: int = 200_000  # ~50-70K tokens, safe for 64K-128K models
     temperature: float = 0.2
     stream: bool = True
     cancel_check: Callable[[], bool] | None = None
@@ -59,10 +59,33 @@ class DeepSeekAgent:
     config: AgentConfig
     events: AgentEventHandler | None = None
     messages: list[dict[str, Any]] = field(default_factory=list)
+    # Usage tracking for /cost command
+    total_prompt_tokens: int = field(default=0, init=False)
+    total_completion_tokens: int = field(default=0, init=False)
+    total_requests: int = field(default=0, init=False)
 
     def __post_init__(self) -> None:
-        if not self.messages:
-            self.messages.append({"role": "system", "content": SYSTEM_PROMPT})
+        if not self.messages or self.messages[0].get("role") != "system":
+            self.messages.insert(0, {"role": "system", "content": SYSTEM_PROMPT})
+
+    def get_usage_summary(self) -> str:
+        """Return a human-readable summary of token usage for /cost command."""
+        total = self.total_prompt_tokens + self.total_completion_tokens
+        # DeepSeek pricing (approximate, per 1M tokens):
+        # deepseek-chat: input ¥1 / output ¥2
+        # deepseek-reasoner: input ¥4 / output ¥16
+        model = self.client.model if hasattr(self.client, "model") else "unknown"
+        if "reasoner" in model.lower():
+            cost = (self.total_prompt_tokens * 4 + self.total_completion_tokens * 16) / 1_000_000
+        else:
+            cost = (self.total_prompt_tokens * 1 + self.total_completion_tokens * 2) / 1_000_000
+        return (
+            f"Requests: {self.total_requests}\n"
+            f"Prompt tokens: {self.total_prompt_tokens:,}\n"
+            f"Completion tokens: {self.total_completion_tokens:,}\n"
+            f"Total tokens: {total:,}\n"
+            f"Estimated cost: ¥{cost:.4f} ({model})"
+        )
 
     def run_turn(self, user_text: str) -> str:
         self.messages.append(
@@ -151,6 +174,12 @@ class DeepSeekAgent:
 
     def _chat_message(self, payload: dict[str, Any]) -> dict[str, Any]:
         response = self.client.chat(payload)
+        # Track usage for /cost command
+        usage = response.get("usage")
+        if isinstance(usage, dict):
+            self.total_prompt_tokens += int(usage.get("prompt_tokens") or 0)
+            self.total_completion_tokens += int(usage.get("completion_tokens") or 0)
+        self.total_requests += 1
         choices = response.get("choices")
         if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
             raise DeepSeekAPIError("DeepSeek API response did not include a valid choice.")
@@ -165,6 +194,11 @@ class DeepSeekAgent:
         tool_call_parts: dict[int, dict[str, Any]] = {}
 
         for event in self.client.chat_stream(payload):
+            # Track usage from final streaming chunk (DeepSeek sends usage in last event)
+            usage = event.get("usage")
+            if isinstance(usage, dict):
+                self.total_prompt_tokens += int(usage.get("prompt_tokens") or 0)
+                self.total_completion_tokens += int(usage.get("completion_tokens") or 0)
             choices = event.get("choices")
             if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
                 continue
@@ -204,6 +238,7 @@ class DeepSeekAgent:
             message["reasoning_content"] = "".join(reasoning_parts)
         if tool_call_parts:
             message["tool_calls"] = [tool_call_parts[index] for index in sorted(tool_call_parts)]
+        self.total_requests += 1
         return message
 
     def _normalize_assistant_message(self, message: dict[str, Any]) -> dict[str, Any]:

@@ -155,7 +155,7 @@ def print_welcome(console: Console, cwd: Path, model: str, session_name: str | N
     body.add_row("model", model)
     body.add_row("session", session_name or "none")
     body.add_row("theme", theme.name)
-    body.add_row("commands", "/sessions, /replay, /review, /logs, /clear, /help, /exit")
+    body.add_row("commands", "/sessions, /replay, /review, /logs, /cost, /clear, /help, /exit")
     console.print(Panel(body, title="DeepSeek CLI", border_style=theme.accent))
 
 
@@ -164,6 +164,7 @@ def print_help(console: Console, theme: Theme) -> None:
         Panel(
             "/exit or /quit: exit\n"
             "/clear: clear conversation\n"
+            "/cost: show token usage and estimated cost\n"
             "/sessions [query]: list or search saved sessions\n"
             "/replay NAME: load a saved session into this conversation\n"
             "/logs: open full logs in a pager\n"
@@ -268,6 +269,9 @@ def _run_loop(
         if prompt == "/help":
             print_help(console, theme)
             continue
+        if prompt == "/cost":
+            console.print(Panel(agent.get_usage_summary(), title="usage & cost", border_style=theme.info))
+            continue
         if prompt == "/sessions" or prompt.startswith("/sessions "):
             query = prompt.removeprefix("/sessions").strip()
             records = store.search(query)
@@ -316,7 +320,14 @@ def _run_loop(
             events._render()
             continue
 
-        answer = agent.run_turn(prompt)
+        try:
+            answer = agent.run_turn(prompt)
+        except KeyboardInterrupt:
+            console.print("[yellow]Interrupted.[/yellow]")
+            continue
+        except Exception as exc:
+            console.print(f"[red]Error: {exc}[/red]")
+            continue
         if on_turn_done:
             on_turn_done()
         console.print(Panel(Markdown(answer or "Done."), title="final", border_style=theme.success))
@@ -534,14 +545,20 @@ def run_split_pane_interactive(
     def request_decision(prompt: str, detail: str = "") -> bool:
         event = threading.Event()
         request = {"prompt": prompt, "detail": detail, "event": event, "result": False}
-        state["approval"] = request
+        with lock:
+            state["approval"] = request
         events._append_activity(f"approval needed: {prompt}\nType y/yes//approve or n/no//reject.")
         if detail:
             logs.text = detail
         events._set_status("waiting for approval")
         events._invalidate()
-        event.wait()
-        state["approval"] = None
+        # Poll with timeout so cancel_requested (Ctrl+D) can break the deadlock
+        while not event.wait(timeout=0.5):
+            if state.get("cancel_requested"):
+                request["result"] = False
+                break
+        with lock:
+            state["approval"] = None
         return bool(request["result"])
 
     def request_hunk_decisions(hunks: list[PatchHunk]) -> list[HunkDecision]:
@@ -682,7 +699,11 @@ def run_split_pane_interactive(
 
     def handle_split_command(prompt: str) -> bool:
         if prompt == "/help":
-            events._append_activity("commands: /sessions [query], /replay NAME, /status, /cancel, /review, /expand, /compact, /clear, /exit.")
+            events._append_activity("commands: /sessions [query], /replay NAME, /status, /cancel, /review, /expand, /compact, /cost, /clear, /exit.")
+            events._invalidate()
+            return True
+        if prompt == "/cost":
+            events._append_activity(agent.get_usage_summary())
             events._invalidate()
             return True
         if prompt == "/sessions" or prompt.startswith("/sessions "):

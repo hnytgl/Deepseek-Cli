@@ -47,6 +47,77 @@ def _unified_diff(path: Path, old: str, new: str) -> str:
     )
 
 
+def _read_source(path: Path) -> str:
+    """Read a source file preserving original newline style.
+
+    Uses newline='' to prevent universal newline translation, so CRLF files
+    on Windows are not silently converted to LF on read/write cycles.
+    Raises ToolError on decode failure instead of silently replacing bytes.
+    """
+    try:
+        with open(path, "r", encoding="utf-8", newline="") as f:
+            return f.read()
+    except UnicodeDecodeError as exc:
+        raise ToolError(
+            f"Cannot decode {path} as UTF-8 ({exc}). "
+            "The file may use a different encoding or be binary."
+        ) from exc
+
+
+def _atomic_write(path: Path, content: str) -> None:
+    """Write content to path atomically via temp file + os.replace.
+
+    Preserves the original file's newline style by using newline=''
+    (no translation). If the process is killed mid-write, the original
+    file remains intact.
+    """
+    import tempfile
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+            f.write(content)
+        os.replace(tmp_path, str(path))
+    except BaseException:
+        # Clean up temp file on failure
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+# Maximum characters to keep from shell output (head + tail).
+# Prevents OOM and token explosion from commands like `cat big.log`
+# or `npm install --verbose`.
+_SHELL_OUTPUT_LIMIT = 16384
+
+
+def _truncate_output(text: str, max_chars: int = _SHELL_OUTPUT_LIMIT) -> str:
+    """Truncate large output keeping head and tail for context.
+
+    Returns the original text if within limits, otherwise keeps the first
+    and last portions with a truncation marker in between.
+    """
+    if len(text) <= max_chars:
+        return text
+    head_size = max_chars * 2 // 3
+    tail_size = max_chars - head_size - 80  # reserve space for marker
+    omitted = len(text) - head_size - tail_size
+    return (
+        text[:head_size]
+        + f"\n\n[… truncated {omitted} characters …]\n\n"
+        + text[-tail_size:]
+    )
+
+
+def _glob_match(filename: str, pattern: str) -> bool:
+    """Simple glob matching for file include filters (e.g. '*.py', 'test_*.py')."""
+    import fnmatch
+    return fnmatch.fnmatch(filename, pattern)
+
+
 def tool_definitions() -> list[dict[str, Any]]:
     return [
         {
@@ -268,6 +339,65 @@ def tool_definitions() -> list[dict[str, Any]]:
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "search",
+                "description": (
+                    "Search file contents using ripgrep (or built-in fallback). "
+                    "Returns matching lines with file paths and line numbers. "
+                    "Much faster and cheaper than shell grep."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "pattern": {"type": "string", "description": "Regex pattern to search for."},
+                        "path": {"type": "string", "description": "Directory or file to search in. Defaults to workspace root."},
+                        "include": {"type": "string", "description": "Glob filter for files to include (e.g. '*.py')."},
+                        "max_results": {"type": "integer", "description": "Maximum number of matching lines to return. Defaults to 50."},
+                    },
+                    "required": ["pattern"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "patch_file",
+                "description": (
+                    "Apply a unified diff patch to a file. Much more token-efficient than "
+                    "write_file for small edits — only send the changed lines, not the whole file. "
+                    "The patch must be in unified diff format (--- a/file / +++ b/file / @@ hunks @@)."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "description": "File to patch (relative to workspace)."},
+                        "patch": {"type": "string", "description": "Unified diff content to apply."},
+                    },
+                    "required": ["path", "patch"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "glob",
+                "description": (
+                    "Find files matching a glob pattern. Returns relative paths sorted by name. "
+                    "Useful for discovering project structure without listing every directory."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "pattern": {"type": "string", "description": "Glob pattern (e.g. 'src/**/*.py', '*.md')."},
+                        "path": {"type": "string", "description": "Base directory. Defaults to workspace root."},
+                        "max_results": {"type": "integer", "description": "Maximum files to return. Defaults to 100."},
+                    },
+                    "required": ["pattern"],
+                },
+            },
+        },
     ]
 
 
@@ -306,6 +436,9 @@ class ToolExecutor:
             "git_create_branch": self._git_create_branch,
             "git_commit": self._git_commit,
             "git_create_pr": self._git_create_pr,
+            "search": self._search,
+            "glob": self._glob,
+            "patch_file": self._patch_file,
         }
         if name not in tools:
             return ToolResult(False, f"Unknown tool: {name}")
@@ -374,7 +507,10 @@ class ToolExecutor:
         if completed.stderr:
             output += ("\n" if output else "") + completed.stderr
         output += f"\n[exit_code={completed.returncode}]"
-        return ToolResult(completed.returncode == 0, output.strip())
+        # Truncate large outputs to prevent OOM and token explosion.
+        # Keep head + tail so the model sees both the start and the error/summary.
+        output = _truncate_output(output.strip(), max_chars=16384)
+        return ToolResult(completed.returncode == 0, output)
 
     def _read_file(self, arguments: dict[str, Any]) -> ToolResult:
         path = self._resolve_checked_path(str(arguments["path"]))
@@ -438,11 +574,10 @@ class ToolExecutor:
         self.policy.check_write()
         path = self._resolve_checked_path(str(arguments["path"]))
         content = str(arguments["content"])
-        old = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+        old = _read_source(path) if path.exists() else ""
         diff = _unified_diff(path, old, content)
         self._confirm_diff(f"Apply write to file: {path}", diff or f"Create empty file: {path}")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8", newline="")
+        _atomic_write(path, content)
         return ToolResult(True, f"Wrote {path} ({len(content)} chars).")
 
     def _replace_in_file(self, arguments: dict[str, Any]) -> ToolResult:
@@ -450,8 +585,10 @@ class ToolExecutor:
         path = self._resolve_checked_path(str(arguments["path"]))
         old = str(arguments["old"])
         new = str(arguments["new"])
+        if not old:
+            raise ToolError("'old' must not be empty. Use write_file to replace entire content.")
         count = arguments.get("count")
-        content = path.read_text(encoding="utf-8")
+        content = _read_source(path)
         if old not in content:
             raise ToolError(f"Text not found in {path}.")
         if count is None:
@@ -459,7 +596,7 @@ class ToolExecutor:
         else:
             updated = content.replace(old, new, int(count))
         self._confirm_diff(f"Apply replacement in file: {path}", _unified_diff(path, content, updated))
-        path.write_text(updated, encoding="utf-8", newline="")
+        _atomic_write(path, updated)
         replacements = content.count(old) if count is None else min(content.count(old), int(count))
         return ToolResult(True, f"Updated {path}; replacements={replacements}.")
 
@@ -484,6 +621,9 @@ class ToolExecutor:
         for item in files:
             path = self._resolve_checked_path(str(item["path"]))
             content = str(item["content"])
+            # Use universal newlines for diff/hunk comparison since model content
+            # is always LF. The write path uses _atomic_write which preserves
+            # whatever newline style is in the final content.
             old = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
             diff = _unified_diff(path, old, content) or f"Create empty file: {path}\n"
             hunks = build_hunks(path, old, content)
@@ -528,7 +668,7 @@ class ToolExecutor:
                     continue
                 content_to_write = content
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content_to_write, encoding="utf-8", newline="")
+            _atomic_write(path, content_to_write)
             applied += 1
         return ToolResult(applied > 0, f"Applied {applied} file edit(s); rejected={rejected}.")
 
@@ -601,7 +741,7 @@ class ToolExecutor:
         if files:
             for file in files:
                 path = self._resolve_checked_path(file)
-                result = self._run_git(["add", os.path.relpath(path, self.cwd)])
+                result = self._run_git(["add", "--", os.path.relpath(path, self.cwd)])
                 if not result.ok:
                     return result
         else:
@@ -643,3 +783,227 @@ class ToolExecutor:
             output += ("\n" if output else "") + completed.stderr
         output += f"\n[exit_code={completed.returncode}]"
         return ToolResult(completed.returncode == 0, output.strip())
+
+    # ------------------------------------------------------------------
+    # Search tools (grep/glob) — no shell required, no policy escalation
+    # ------------------------------------------------------------------
+
+    def _search(self, arguments: dict[str, Any]) -> ToolResult:
+        """Search file contents using ripgrep (preferred) or built-in Python fallback."""
+        import re as _re
+
+        pattern = str(arguments["pattern"])
+        search_path = self._resolve_checked_path(str(arguments.get("path") or "."))
+        include = arguments.get("include")  # glob filter like "*.py"
+        max_results = min(int(arguments.get("max_results") or 50), 200)
+
+        # Try ripgrep first (fast, respects .gitignore)
+        rg = shutil.which("rg")
+        if rg:
+            cmd = [rg, "--no-heading", "--line-number", "--max-count", str(max_results), pattern]
+            if include:
+                cmd.extend(["--glob", str(include)])
+            cmd.append(str(search_path))
+            try:
+                completed = subprocess.run(
+                    cmd, cwd=self.cwd, text=True, errors="replace",
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30,
+                )
+                if completed.returncode in (0, 1):  # 1 = no matches
+                    output = completed.stdout.strip() or "(no matches)"
+                    return ToolResult(True, _truncate_output(output, 8192))
+            except (subprocess.TimeoutExpired, OSError):
+                pass  # fall through to Python fallback
+
+        # Python fallback: walk directory and regex match
+        try:
+            regex = _re.compile(pattern)
+        except _re.error as exc:
+            raise ToolError(f"Invalid regex pattern: {exc}") from exc
+
+        results: list[str] = []
+        files_scanned = 0
+        for root, dirs, files in os.walk(search_path):
+            # Skip hidden dirs and common noise
+            dirs[:] = [d for d in dirs if not d.startswith(".") and d not in
+                       ("node_modules", "__pycache__", ".git", "venv", ".venv", "dist", "build")]
+            for fname in sorted(files):
+                if include and not _glob_match(fname, str(include)):
+                    continue
+                fpath = Path(root) / fname
+                if fpath.is_symlink():
+                    continue
+                try:
+                    text = fpath.read_text(encoding="utf-8", errors="ignore")
+                except (OSError, ValueError):
+                    continue
+                files_scanned += 1
+                for lineno, line in enumerate(text.splitlines(), 1):
+                    if regex.search(line):
+                        rel = os.path.relpath(fpath, self.cwd)
+                        results.append(f"{rel}:{lineno}:{line.rstrip()}")
+                        if len(results) >= max_results:
+                            break
+                if len(results) >= max_results:
+                    break
+            if len(results) >= max_results:
+                break
+
+        if not results:
+            return ToolResult(True, f"(no matches in {files_scanned} files scanned)")
+        header = f"Found {len(results)} match(es) in {files_scanned} files scanned:\n"
+        return ToolResult(True, _truncate_output(header + "\n".join(results), 8192))
+
+    def _glob(self, arguments: dict[str, Any]) -> ToolResult:
+        """Find files matching a glob pattern."""
+        pattern = str(arguments["pattern"])
+        base_path = self._resolve_checked_path(str(arguments.get("path") or "."))
+        max_results = min(int(arguments.get("max_results") or 100), 500)
+
+        matches: list[str] = []
+        try:
+            for match in sorted(base_path.glob(pattern)):
+                if match.is_file():
+                    matches.append(os.path.relpath(match, self.cwd))
+                    if len(matches) >= max_results:
+                        break
+        except (OSError, ValueError) as exc:
+            raise ToolError(f"Glob error: {exc}") from exc
+
+        if not matches:
+            return ToolResult(True, f"(no files matching '{pattern}')")
+        header = f"Found {len(matches)} file(s):\n"
+        return ToolResult(True, header + "\n".join(matches))
+
+    def _patch_file(self, arguments: dict[str, Any]) -> ToolResult:
+        """Apply a unified diff patch to a file.
+
+        Much more token-efficient than write_file for small edits — the model
+        only sends the changed lines, not the entire file content.
+        """
+        self.policy.check_write()
+        path = self._resolve_checked_path(str(arguments["path"]))
+        patch_text = str(arguments["patch"])
+
+        if not patch_text.strip():
+            raise ToolError("Patch content must not be empty.")
+
+        original = _read_source(path) if path.exists() else ""
+        updated = _apply_unified_patch(original, patch_text)
+
+        if updated == original:
+            return ToolResult(False, f"Patch produced no changes to {path}. Check that context lines match exactly.")
+
+        diff = _unified_diff(path, original, updated)
+        self._confirm_diff(f"Apply patch to file: {path}", diff)
+        _atomic_write(path, updated)
+        # Count changed lines for feedback
+        added = sum(1 for line in updated.splitlines() if line not in original.splitlines())
+        return ToolResult(True, f"Patched {path} ({len(updated.splitlines())} lines total).")
+
+
+def _apply_unified_patch(original: str, patch_text: str) -> str:
+    """Apply a unified diff patch to original text.
+
+    Supports standard unified diff format:
+        --- a/file
+        +++ b/file
+        @@ -start,count +start,count @@
+        -removed line
+        +added line
+         context line
+
+    Falls back to simple line-based hunk application if header parsing fails.
+    """
+    lines = original.splitlines(keepends=True)
+    # Ensure last line has newline for consistent processing
+    if lines and not lines[-1].endswith("\n"):
+        lines[-1] += "\n"
+        trailing_newline = False
+    else:
+        trailing_newline = True
+
+    result = list(lines)
+    hunks = _parse_hunks(patch_text)
+
+    if not hunks:
+        raise ToolError("No valid hunks found in patch. Expected @@ -N,M +N,M @@ headers.")
+
+    # Apply hunks in reverse order to preserve line numbers
+    offset = 0
+    for hunk in sorted(hunks, key=lambda h: h["orig_start"], reverse=True):
+        start = hunk["orig_start"] - 1  # 0-indexed
+        orig_lines = hunk["orig_lines"]
+        new_lines = hunk["new_lines"]
+
+        # Verify context matches
+        actual = result[start:start + len(orig_lines)]
+        if not _fuzzy_match(actual, orig_lines):
+            raise ToolError(
+                f"Patch hunk at line {hunk['orig_start']} does not match file content. "
+                "The file may have been modified since the patch was generated."
+            )
+
+        result[start:start + len(orig_lines)] = new_lines
+
+    patched = "".join(result)
+    if not trailing_newline and patched.endswith("\n"):
+        patched = patched[:-1]
+    return patched
+
+
+def _parse_hunks(patch_text: str) -> list[dict[str, Any]]:
+    """Parse unified diff into hunks."""
+    import re as _re
+
+    hunks = []
+    hunk_header = _re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+    current_hunk = None
+
+    for line in patch_text.splitlines(keepends=True):
+        match = hunk_header.match(line)
+        if match:
+            if current_hunk:
+                hunks.append(current_hunk)
+            current_hunk = {
+                "orig_start": int(match.group(1)),
+                "orig_count": int(match.group(2) or 1),
+                "new_start": int(match.group(3)),
+                "new_count": int(match.group(4) or 1),
+                "orig_lines": [],
+                "new_lines": [],
+            }
+            continue
+
+        if current_hunk is None:
+            continue  # skip --- / +++ headers
+
+        # Ensure line ends with \n for consistent comparison
+        if not line.endswith("\n"):
+            line += "\n"
+
+        if line.startswith("-"):
+            current_hunk["orig_lines"].append(line[1:])
+        elif line.startswith("+"):
+            current_hunk["new_lines"].append(line[1:])
+        elif line.startswith(" ") or line == "\n":
+            content = line[1:] if line.startswith(" ") else line
+            current_hunk["orig_lines"].append(content)
+            current_hunk["new_lines"].append(content)
+        elif line.startswith("\\"):
+            continue  # "\ No newline at end of file"
+        # else: unknown line, skip
+
+    if current_hunk:
+        hunks.append(current_hunk)
+    return hunks
+
+
+def _fuzzy_match(actual: list[str], expected: list[str]) -> bool:
+    """Check if actual lines match expected, ignoring trailing whitespace differences."""
+    if len(actual) != len(expected):
+        return False
+    for a, e in zip(actual, expected):
+        if a.rstrip("\r\n") != e.rstrip("\r\n"):
+            return False
+    return True
