@@ -9,6 +9,7 @@ from pathlib import Path
 from . import __version__
 from .agent import AgentConfig, DeepSeekAgent
 from .api import DEFAULT_MODEL, DeepSeekAPIError, DeepSeekClient
+from .config import AppConfig, load_config
 from .policy import PermissionConfig, PermissionError as PolicyError, load_project_policy, save_project_policy
 from .session import SessionError, SessionStore
 from .theme import THEMES
@@ -58,12 +59,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--api-key", default=None, help="DeepSeek API key. Prefer DEEPSEEK_API_KEY.")
     parser.add_argument("--api-timeout", type=positive_float, default=120, help="API request timeout in seconds.")
     parser.add_argument("--api-retries", type=nonnegative_int, default=3, help="Retries for HTTP 429, 5xx, and network errors.")
-    parser.add_argument("--yes", "-y", action="store_true", help="Auto-approve tool execution.")
+    parser.add_argument("--yes", "-y", action="store_true", help="Auto-approve all tool execution (alias for --approval full-auto).")
     parser.add_argument(
         "--approval",
-        choices=["ask", "auto", "read-only"],
+        choices=["suggest", "auto-edit", "full-auto", "ask", "auto", "read-only"],
         default=None,
-        help="Tool approval mode. --yes is an alias for --approval auto.",
+        help=(
+            "Tool approval mode. Codex-style: suggest (read-only, ask before edits), "
+            "auto-edit (auto-approve file edits, ask for shell), "
+            "full-auto (auto-approve everything in sandbox). "
+            "Legacy: ask/auto/read-only still supported."
+        ),
     )
     parser.add_argument(
         "--sandbox",
@@ -97,12 +103,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-context-chars",
         type=positive_int,
-        default=1_000_000,
+        default=200_000,
         help="Approximate maximum conversation context characters sent to the model.",
     )
     parser.add_argument("--temperature", type=float, default=0.2, help="Sampling temperature.")
+    parser.add_argument("-q", "--quiet", action="store_true", help="Quiet mode: minimal output, suitable for scripting.")
     parser.add_argument("--plain", action="store_true", help="Use plain input/output instead of the Rich TUI.")
     parser.add_argument("--fullscreen", action="store_true", help="Use an alternate full-screen terminal surface.")
+    parser.add_argument(
+        "--reasoning", action="store_true",
+        help="Enable DeepSeek reasoning mode (uses deepseek-reasoner model with thinking budget).",
+    )
+    parser.add_argument(
+        "--thinking-budget", type=positive_int, default=4096,
+        help="Max thinking tokens for reasoning mode (default: 4096).",
+    )
     parser.add_argument(
         "--theme",
         choices=sorted(THEMES),
@@ -135,36 +150,56 @@ def create_agent(args: argparse.Namespace) -> DeepSeekAgent:
     if not cwd.is_dir():
         raise SystemExit(f"Workspace is not a directory: {cwd}")
 
+    # Load config file (user + project level)
+    file_config = load_config(cwd)
+
+    # Resolve model: CLI > env > config file > default
+    model = args.model or file_config.model or None
+    # Reasoning mode: switch to reasoner model
+    if args.reasoning or file_config.reasoning.enabled:
+        model = file_config.reasoning.model or "deepseek-reasoner"
+
     client = DeepSeekClient.from_env(
-        api_key=args.api_key,
-        base_url=args.base_url,
-        model=args.model,
+        api_key=args.api_key or file_config.api_key or None,
+        base_url=args.base_url or file_config.base_url or None,
+        model=model,
         timeout=args.api_timeout,
         max_retries=args.api_retries,
     )
+
+    # Map Codex-style approval modes to internal policy
+    _APPROVAL_MAP = {
+        "suggest": "read-only",
+        "auto-edit": "ask",      # auto-approve file edits, ask for shell
+        "full-auto": "auto",
+        "ask": "ask",
+        "auto": "auto",
+        "read-only": "read-only",
+    }
     base_policy = load_project_policy(cwd)
     # Security: project-level policy can only RESTRICT, never ESCALATE privileges.
-    # A malicious repo must not be able to set approval=auto or sandbox=unrestricted
-    # via .deepseek-cli/policy.json. Only explicit CLI flags can loosen restrictions.
     _APPROVAL_RANK = {"read-only": 0, "ask": 1, "auto": 2}
     _SANDBOX_RANK = {"workspace": 0, "unrestricted": 1}
-    cli_approval = args.approval or ("auto" if args.yes else None)
+    raw_approval = args.approval or ("full-auto" if args.yes else None) or file_config.approval
+    cli_approval = _APPROVAL_MAP.get(raw_approval, raw_approval) if raw_approval else None
     effective_approval = cli_approval or base_policy.approval
-    # Project policy cannot escalate approval beyond "ask" (the default)
     if not cli_approval and _APPROVAL_RANK.get(base_policy.approval, 1) > _APPROVAL_RANK.get("ask", 1):
         effective_approval = "ask"
-    cli_sandbox = args.sandbox
+    cli_sandbox = args.sandbox or (file_config.sandbox if file_config.sandbox else None)
     effective_sandbox = cli_sandbox or base_policy.sandbox
-    # Project policy cannot escalate sandbox beyond "workspace" (the default)
     if not cli_sandbox and _SANDBOX_RANK.get(base_policy.sandbox, 0) > _SANDBOX_RANK.get("workspace", 0):
         effective_sandbox = "workspace"
+
+    # Merge shell allow/deny from config file + CLI flags
+    allow_cmds = tuple(c.lower() for c in args.allow_command) or tuple(file_config.shell.allow) or base_policy.allow_commands
+    deny_cmds = tuple(c.lower() for c in args.deny_command) or tuple(file_config.shell.deny) or base_policy.deny_commands
+
     policy = PermissionConfig(
         approval=effective_approval,
         sandbox=effective_sandbox,
         shell=base_policy.shell and not args.no_shell,
-        allow_commands=tuple(command.lower() for command in args.allow_command) or base_policy.allow_commands,
-        deny_commands=tuple(command.lower() for command in args.deny_command) or base_policy.deny_commands,
-        # install_tools: project policy cannot enable; only explicit CLI flag can
+        allow_commands=allow_cmds,
+        deny_commands=deny_cmds,
         install_tools=args.allow_install_tools,
     )
     if args.save_policy:
@@ -192,6 +227,7 @@ def create_agent(args: argparse.Namespace) -> DeepSeekAgent:
             stream=not args.no_stream,
         ),
         messages=messages,
+        agents_md=file_config.agents_md,
     )
 
 
