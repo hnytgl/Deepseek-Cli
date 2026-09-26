@@ -160,21 +160,11 @@ def print_welcome(console: Console, cwd: Path, model: str, session_name: str | N
 
 
 def print_help(console: Console, theme: Theme) -> None:
+    from .commands import format_help
+    help_text = format_help(include_fullscreen=True)
     console.print(
         Panel(
-            "/exit or /quit: exit\n"
-            "/clear: clear conversation\n"
-            "/cost: show token usage and estimated cost\n"
-            "/sessions [query]: list or search saved sessions\n"
-            "/replay NAME: load a saved session into this conversation\n"
-            "/logs: open full logs in a pager\n"
-            "/review: show current git diff\n"
-            "/status: show current task progress\n"
-            "/cancel: stop after the current model/tool step when possible\n"
-            "/compact: compact Codex-like output\n"
-            "/expand: full output mode\n"
-            "/help: show help\n\n"
-            "Fullscreen keys: F4 toggles compact/full logs, Tab changes focus, Ctrl+L clears panes, Ctrl+D exits.",
+            help_text + "\n\nFullscreen keys: F4 toggles compact/full logs, Tab changes focus, Ctrl+L clears panes, Ctrl+D exits.",
             title="help",
             border_style=theme.accent,
         )
@@ -318,6 +308,16 @@ def _run_loop(
             events.max_steps = 0
             events.current_status = "cleared"
             events._render()
+            continue
+        if prompt == "/status":
+            status = f"step {events.step}/{events.max_steps}" if events.max_steps else "idle"
+            console.print(f"[{theme.info}]Status: {status} | {events.current_status}[/{theme.info}]")
+            continue
+        if prompt == "/cancel":
+            if agent.config.cancel_check:
+                console.print(f"[{theme.warning}]Cancel requested. Will stop after current step.[/{theme.warning}]")
+            else:
+                console.print(f"[{theme.warning}]No task is currently running.[/{theme.warning}]")
             continue
 
         try:
