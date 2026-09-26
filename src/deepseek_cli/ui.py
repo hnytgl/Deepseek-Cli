@@ -155,7 +155,7 @@ def print_welcome(console: Console, cwd: Path, model: str, session_name: str | N
     body.add_row("model", model)
     body.add_row("session", session_name or "none")
     body.add_row("theme", theme.name)
-    body.add_row("commands", "/sessions, /replay, /review, /logs, /clear, /help, /exit")
+    body.add_row("commands", "/sessions, /replay, /review, /logs, /cost, /clear, /help, /exit")
     console.print(Panel(body, title="DeepSeek CLI", border_style=theme.accent))
 
 
@@ -164,6 +164,7 @@ def print_help(console: Console, theme: Theme) -> None:
         Panel(
             "/exit or /quit: exit\n"
             "/clear: clear conversation\n"
+            "/cost: show token usage and estimated cost\n"
             "/sessions [query]: list or search saved sessions\n"
             "/replay NAME: load a saved session into this conversation\n"
             "/logs: open full logs in a pager\n"
@@ -267,6 +268,9 @@ def _run_loop(
             return 0
         if prompt == "/help":
             print_help(console, theme)
+            continue
+        if prompt == "/cost":
+            console.print(Panel(agent.get_usage_summary(), title="usage & cost", border_style=theme.info))
             continue
         if prompt == "/sessions" or prompt.startswith("/sessions "):
             query = prompt.removeprefix("/sessions").strip()
@@ -695,7 +699,11 @@ def run_split_pane_interactive(
 
     def handle_split_command(prompt: str) -> bool:
         if prompt == "/help":
-            events._append_activity("commands: /sessions [query], /replay NAME, /status, /cancel, /review, /expand, /compact, /clear, /exit.")
+            events._append_activity("commands: /sessions [query], /replay NAME, /status, /cancel, /review, /expand, /compact, /cost, /clear, /exit.")
+            events._invalidate()
+            return True
+        if prompt == "/cost":
+            events._append_activity(agent.get_usage_summary())
             events._invalidate()
             return True
         if prompt == "/sessions" or prompt.startswith("/sessions "):
