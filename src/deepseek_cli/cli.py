@@ -9,7 +9,7 @@ from pathlib import Path
 from . import __version__
 from .agent import AgentConfig, DeepSeekAgent
 from .api import DEFAULT_MODEL, DeepSeekAPIError, DeepSeekClient
-from .config import AppConfig, load_config
+from .config import AppConfig, load_config, apply_profile
 from .policy import PermissionConfig, PermissionError as PolicyError, load_project_policy, save_project_policy
 from .session import SessionError, SessionStore
 from .theme import THEMES
@@ -61,6 +61,8 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["deepseek", "ollama", "lmstudio", "openai", "openrouter", "anthropic"],
         help="API provider. Local providers (ollama/lmstudio) don't need an API key.",
     )
+    parser.add_argument("--profile", default=None, metavar="NAME",
+                        help="Load a named profile from config.toml [profiles.NAME] section.")
     parser.add_argument("--api-key", default=None, help="DeepSeek API key. Prefer DEEPSEEK_API_KEY.")
     parser.add_argument("--api-timeout", type=positive_float, default=120, help="API request timeout in seconds.")
     parser.add_argument("--api-retries", type=nonnegative_int, default=3, help="Retries for HTTP 429, 5xx, and network errors.")
@@ -162,6 +164,10 @@ def create_agent(args: argparse.Namespace) -> DeepSeekAgent:
 
     # Load config file (user + project level)
     file_config = load_config(cwd)
+    # Apply named profile if specified (--profile or config active_profile)
+    profile_name = args.profile or file_config.active_profile
+    if profile_name:
+        file_config = apply_profile(file_config, profile_name)
 
     # Resolve model: CLI > env > config file > default
     model = args.model or file_config.model or None

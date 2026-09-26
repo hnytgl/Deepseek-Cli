@@ -80,6 +80,7 @@ class AppConfig:
     model: str = ""
     api_key: str = ""
     base_url: str = ""
+    provider: str = ""  # deepseek | ollama | lmstudio | openai | openrouter
     approval: str = ""  # suggest | auto-edit | full-auto
     sandbox: str = ""  # workspace | unrestricted
     theme: str = ""
@@ -100,6 +101,13 @@ class AppConfig:
 
     # Project instructions
     agents_md: str = ""  # content of AGENTS.md if found
+
+    # Profiles: named configuration presets (Codex-style)
+    profiles: dict[str, dict[str, Any]] = field(default_factory=dict)
+    active_profile: str = ""
+
+    # MCP servers
+    mcp_servers: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 def _load_toml(path: Path) -> dict[str, Any]:
@@ -192,6 +200,46 @@ def _apply_dict(config: AppConfig, data: dict[str, Any]) -> None:
             config.shell.allow = [str(c) for c in shell["allow"]]
         if "deny" in shell and isinstance(shell["deny"], list):
             config.shell.deny = [str(c) for c in shell["deny"]]
+
+    # [provider] field
+    if "provider" in data and isinstance(data["provider"], str):
+        config.provider = data["provider"]
+
+    # [profiles] section: named configuration presets
+    profiles = data.get("profiles")
+    if isinstance(profiles, dict):
+        for name, profile_data in profiles.items():
+            if isinstance(profile_data, dict):
+                config.profiles[name] = profile_data
+
+    # [mcp_servers] section
+    mcp = data.get("mcp_servers") or data.get("mcp")
+    if isinstance(mcp, dict):
+        for name, server_data in mcp.items():
+            if isinstance(server_data, dict):
+                config.mcp_servers[name] = server_data
+
+
+def apply_profile(config: AppConfig, profile_name: str) -> AppConfig:
+    """Apply a named profile on top of the current config.
+
+    Profiles are defined in config.toml under [profiles.name]:
+        [profiles.fast]
+        model = "deepseek-flash"
+        approval = "full-auto"
+        temperature = 0.1
+
+        [profiles.careful]
+        model = "deepseek-v4-pro"
+        approval = "suggest"
+        reasoning = { enabled = true }
+    """
+    profile = config.profiles.get(profile_name)
+    if not profile:
+        return config
+    config.active_profile = profile_name
+    _apply_dict(config, profile)
+    return config
 
 
 def _load_agents_md(cwd: Path) -> str:
