@@ -15,7 +15,7 @@ Example config.toml:
 
     [reasoning]
     enabled = true
-    model = "deepseek-reasoner"
+    model = "deepseek-v4-pro"
     thinking_budget = 4096
 
     [shell]
@@ -62,7 +62,7 @@ def user_config_path() -> Path:
 class ReasoningConfig:
     """DeepSeek reasoning mode configuration."""
     enabled: bool = False
-    model: str = "deepseek-reasoner"
+    model: str = "deepseek-v4-pro"
     thinking_budget: int = 4096  # max thinking tokens
 
 

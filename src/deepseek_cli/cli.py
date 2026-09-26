@@ -155,9 +155,9 @@ def create_agent(args: argparse.Namespace) -> DeepSeekAgent:
 
     # Resolve model: CLI > env > config file > default
     model = args.model or file_config.model or None
-    # Reasoning mode: switch to reasoner model
+    # Reasoning mode: switch to pro model (thinking mode)
     if args.reasoning or file_config.reasoning.enabled:
-        model = file_config.reasoning.model or "deepseek-reasoner"
+        model = file_config.reasoning.model or "deepseek-v4-pro"
 
     client = DeepSeekClient.from_env(
         api_key=args.api_key or file_config.api_key or None,

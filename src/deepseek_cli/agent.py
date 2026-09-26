@@ -88,10 +88,10 @@ class DeepSeekAgent:
         """Return a human-readable summary of token usage for /cost command."""
         total = self.total_prompt_tokens + self.total_completion_tokens
         # DeepSeek pricing (approximate, per 1M tokens):
-        # deepseek-chat: input ¥1 / output ¥2
-        # deepseek-reasoner: input ¥4 / output ¥16
-        model = self.client.model if hasattr(self.client, "model") else "unknown"
-        if "reasoner" in model.lower():
+        # deepseek-flash / deepseek-v4-flash: input ¥1 / output ¥2
+        # deepseek-v4-pro (thinking mode): input ¥4 / output ¥16
+        model = getattr(self.client, "model", "") or "unknown"
+        if "pro" in model.lower() or "reasoner" in model.lower():
             cost = (self.total_prompt_tokens * 4 + self.total_completion_tokens * 16) / 1_000_000
         else:
             cost = (self.total_prompt_tokens * 1 + self.total_completion_tokens * 2) / 1_000_000
@@ -123,8 +123,9 @@ class DeepSeekAgent:
                 "tool_choice": "auto",
                 "temperature": self.config.temperature,
             }
-            # DeepSeek reasoning mode: pass thinking budget when using reasoner model
-            if "reasoner" in (getattr(self.client, "model", "") or "").lower():
+            # DeepSeek reasoning mode: pass thinking budget when using pro/thinking model
+            _model = (getattr(self.client, "model", "") or "").lower()
+            if "pro" in _model or "reasoner" in _model or "thinking" in _model:
                 payload["thinking"] = {"type": "enabled", "budget_tokens": self.config.thinking_budget}
             message = self._stream_message(payload) if self.config.stream else self._chat_message(payload)
             self.messages.append(self._normalize_assistant_message(message))

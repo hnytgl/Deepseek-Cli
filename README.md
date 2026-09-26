@@ -17,7 +17,7 @@
 - **配置文件**：`~/.deepseek-cli/config.toml` + 项目级覆盖，偏好持久化，不用每次敲 flag
 - **AGENTS.md 项目指令**：自动读取项目根目录的 `AGENTS.md` / `DEEPSEEK.md`，注入系统提示词，让模型了解你的代码规范和构建命令
 - **Codex 风格审批模式**：`suggest`（只读）/ `auto-edit`（自动改文件，shell 需确认）/ `full-auto`（全自动）
-- **DeepSeek 推理模式**：`--reasoning` 切换 deepseek-reasoner，`--thinking-budget` 控制思考深度
+- **DeepSeek 推理模式**：`--reasoning` 切换 deepseek-v4-pro，`--thinking-budget` 控制思考深度
 - **代码搜索工具**：`search`（ripgrep + Python fallback）和 `glob`，无需开 shell 即可搜索代码
 - **补丁式编辑**：`patch_file` 接受 unified diff，比整文件回传省 10× token
 - **费用统计**：`/cost` 命令实时显示 token 用量和估算费用（¥）
@@ -44,10 +44,10 @@
 ## 功能特性
 
 ### 核心能力
-- 适配 DeepSeek OpenAI-compatible Chat Completions API（`deepseek-chat` / `deepseek-reasoner`）。
+- 适配 DeepSeek OpenAI-compatible Chat Completions API（`deepseek-flash` / `deepseek-v4-pro`）。
 - **代码搜索**：内置 `search`（ripgrep + Python fallback）和 `glob` 工具，无需开 shell 即可搜索代码。
 - **补丁式编辑**：`patch_file` 工具接受 unified diff，比整文件回传省 10× token。
-- **DeepSeek 推理模式**：`--reasoning` 启用深度思考，复杂架构分析和调试更强。
+- **DeepSeek 推理模式**：`--reasoning` 启用深度思考（deepseek-v4-pro），复杂架构分析和调试更强。
 - **AGENTS.md 项目指令**：自动读取项目根目录的 `AGENTS.md`，让模型了解你的代码规范。
 - **配置文件**：`~/.deepseek-cli/config.toml` 持久化偏好，不用每次敲 flag。
 - **Codex 风格审批模式**：`suggest`（只读）/ `auto-edit`（自动改文件，shell 需确认）/ `full-auto`（全自动）。
@@ -400,7 +400,7 @@ gh auth status
 
 ```toml
 # ~/.deepseek-cli/config.toml
-model = "deepseek-chat"
+model = "deepseek-flash"
 approval = "auto-edit"
 theme = "dark"
 sandbox = "workspace"
@@ -409,7 +409,7 @@ temperature = 0.2
 
 [reasoning]
 enabled = false
-model = "deepseek-reasoner"
+model = "deepseek-v4-pro"
 thinking_budget = 4096
 
 [shell]
@@ -446,7 +446,7 @@ deny = ["rm -rf", "sudo", "format"]
 
 - `DEEPSEEK_API_KEY`：必填，DeepSeek API Key。
 - `DEEPSEEK_BASE_URL`：可选，默认 `https://api.deepseek.com`。
-- `DEEPSEEK_MODEL`：可选，默认 `deepseek-chat`。
+- `DEEPSEEK_MODEL`：可选，默认 `deepseek-v4-flash`。
 - `DEEPSEEK_THEME`：可选，TUI 主题。
 
 ### DeepSeek 推理模式
@@ -454,7 +454,7 @@ deny = ["rm -rf", "sudo", "format"]
 复杂任务（架构分析、疑难 bug、多文件重构）可启用推理模式：
 
 ```bash
-# 使用 deepseek-reasoner 模型，带思考过程
+# 使用 deepseek-v4-pro 模型，带思考过程
 deepseek --reasoning "分析这个项目的架构瓶颈并给出重构方案"
 
 # 自定义思考预算
@@ -474,11 +474,11 @@ deepseek --reasoning --thinking-budget 8192 "调试这个并发死锁问题"
 │ Completion tokens: 8,112          │
 │ Total tokens: 53,342              │
 │ Estimated cost: ¥0.0615           │
-│ (deepseek-chat)                   │
+│ (deepseek-flash)                  │
 └───────────────────────────────────┘
 ```
 
-DeepSeek 定价参考：chat 输入 ¥1/百万 token，输出 ¥2/百万 token；reasoner 输入 ¥4，输出 ¥16。
+DeepSeek 定价参考：flash 输入 ¥1/百万 token，输出 ¥2/百万 token；v4-pro（推理）输入 ¥4，输出 ¥16。
 
 ### API 稳定性参数
 
