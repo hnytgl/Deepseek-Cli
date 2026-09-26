@@ -6,8 +6,12 @@ from pathlib import Path
 import shlex
 
 
-class PermissionError(RuntimeError):
+class PolicyViolation(RuntimeError):
     """Raised when a tool violates the configured policy."""
+
+
+# Backward-compatible alias (deprecated, use PolicyViolation)
+PermissionError = PolicyViolation
 
 
 @dataclass(frozen=True)

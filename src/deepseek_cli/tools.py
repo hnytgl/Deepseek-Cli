@@ -47,6 +47,71 @@ def _unified_diff(path: Path, old: str, new: str) -> str:
     )
 
 
+def _read_source(path: Path) -> str:
+    """Read a source file preserving original newline style.
+
+    Uses newline='' to prevent universal newline translation, so CRLF files
+    on Windows are not silently converted to LF on read/write cycles.
+    Raises ToolError on decode failure instead of silently replacing bytes.
+    """
+    try:
+        with open(path, "r", encoding="utf-8", newline="") as f:
+            return f.read()
+    except UnicodeDecodeError as exc:
+        raise ToolError(
+            f"Cannot decode {path} as UTF-8 ({exc}). "
+            "The file may use a different encoding or be binary."
+        ) from exc
+
+
+def _atomic_write(path: Path, content: str) -> None:
+    """Write content to path atomically via temp file + os.replace.
+
+    Preserves the original file's newline style by using newline=''
+    (no translation). If the process is killed mid-write, the original
+    file remains intact.
+    """
+    import tempfile
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+            f.write(content)
+        os.replace(tmp_path, str(path))
+    except BaseException:
+        # Clean up temp file on failure
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+# Maximum characters to keep from shell output (head + tail).
+# Prevents OOM and token explosion from commands like `cat big.log`
+# or `npm install --verbose`.
+_SHELL_OUTPUT_LIMIT = 16384
+
+
+def _truncate_output(text: str, max_chars: int = _SHELL_OUTPUT_LIMIT) -> str:
+    """Truncate large output keeping head and tail for context.
+
+    Returns the original text if within limits, otherwise keeps the first
+    and last portions with a truncation marker in between.
+    """
+    if len(text) <= max_chars:
+        return text
+    head_size = max_chars * 2 // 3
+    tail_size = max_chars - head_size - 80  # reserve space for marker
+    omitted = len(text) - head_size - tail_size
+    return (
+        text[:head_size]
+        + f"\n\n[… truncated {omitted} characters …]\n\n"
+        + text[-tail_size:]
+    )
+
+
 def tool_definitions() -> list[dict[str, Any]]:
     return [
         {
@@ -374,7 +439,10 @@ class ToolExecutor:
         if completed.stderr:
             output += ("\n" if output else "") + completed.stderr
         output += f"\n[exit_code={completed.returncode}]"
-        return ToolResult(completed.returncode == 0, output.strip())
+        # Truncate large outputs to prevent OOM and token explosion.
+        # Keep head + tail so the model sees both the start and the error/summary.
+        output = _truncate_output(output.strip(), max_chars=16384)
+        return ToolResult(completed.returncode == 0, output)
 
     def _read_file(self, arguments: dict[str, Any]) -> ToolResult:
         path = self._resolve_checked_path(str(arguments["path"]))
@@ -438,11 +506,10 @@ class ToolExecutor:
         self.policy.check_write()
         path = self._resolve_checked_path(str(arguments["path"]))
         content = str(arguments["content"])
-        old = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+        old = _read_source(path) if path.exists() else ""
         diff = _unified_diff(path, old, content)
         self._confirm_diff(f"Apply write to file: {path}", diff or f"Create empty file: {path}")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8", newline="")
+        _atomic_write(path, content)
         return ToolResult(True, f"Wrote {path} ({len(content)} chars).")
 
     def _replace_in_file(self, arguments: dict[str, Any]) -> ToolResult:
@@ -450,8 +517,10 @@ class ToolExecutor:
         path = self._resolve_checked_path(str(arguments["path"]))
         old = str(arguments["old"])
         new = str(arguments["new"])
+        if not old:
+            raise ToolError("'old' must not be empty. Use write_file to replace entire content.")
         count = arguments.get("count")
-        content = path.read_text(encoding="utf-8")
+        content = _read_source(path)
         if old not in content:
             raise ToolError(f"Text not found in {path}.")
         if count is None:
@@ -459,7 +528,7 @@ class ToolExecutor:
         else:
             updated = content.replace(old, new, int(count))
         self._confirm_diff(f"Apply replacement in file: {path}", _unified_diff(path, content, updated))
-        path.write_text(updated, encoding="utf-8", newline="")
+        _atomic_write(path, updated)
         replacements = content.count(old) if count is None else min(content.count(old), int(count))
         return ToolResult(True, f"Updated {path}; replacements={replacements}.")
 
@@ -484,6 +553,9 @@ class ToolExecutor:
         for item in files:
             path = self._resolve_checked_path(str(item["path"]))
             content = str(item["content"])
+            # Use universal newlines for diff/hunk comparison since model content
+            # is always LF. The write path uses _atomic_write which preserves
+            # whatever newline style is in the final content.
             old = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
             diff = _unified_diff(path, old, content) or f"Create empty file: {path}\n"
             hunks = build_hunks(path, old, content)
@@ -528,7 +600,7 @@ class ToolExecutor:
                     continue
                 content_to_write = content
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content_to_write, encoding="utf-8", newline="")
+            _atomic_write(path, content_to_write)
             applied += 1
         return ToolResult(applied > 0, f"Applied {applied} file edit(s); rejected={rejected}.")
 
@@ -601,7 +673,7 @@ class ToolExecutor:
         if files:
             for file in files:
                 path = self._resolve_checked_path(file)
-                result = self._run_git(["add", os.path.relpath(path, self.cwd)])
+                result = self._run_git(["add", "--", os.path.relpath(path, self.cwd)])
                 if not result.ok:
                     return result
         else:

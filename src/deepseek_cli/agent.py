@@ -61,8 +61,8 @@ class DeepSeekAgent:
     messages: list[dict[str, Any]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
-        if not self.messages:
-            self.messages.append({"role": "system", "content": SYSTEM_PROMPT})
+        if not self.messages or self.messages[0].get("role") != "system":
+            self.messages.insert(0, {"role": "system", "content": SYSTEM_PROMPT})
 
     def run_turn(self, user_text: str) -> str:
         self.messages.append(

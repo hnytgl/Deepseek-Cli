@@ -316,7 +316,14 @@ def _run_loop(
             events._render()
             continue
 
-        answer = agent.run_turn(prompt)
+        try:
+            answer = agent.run_turn(prompt)
+        except KeyboardInterrupt:
+            console.print("[yellow]Interrupted.[/yellow]")
+            continue
+        except Exception as exc:
+            console.print(f"[red]Error: {exc}[/red]")
+            continue
         if on_turn_done:
             on_turn_done()
         console.print(Panel(Markdown(answer or "Done."), title="final", border_style=theme.success))
@@ -534,14 +541,20 @@ def run_split_pane_interactive(
     def request_decision(prompt: str, detail: str = "") -> bool:
         event = threading.Event()
         request = {"prompt": prompt, "detail": detail, "event": event, "result": False}
-        state["approval"] = request
+        with lock:
+            state["approval"] = request
         events._append_activity(f"approval needed: {prompt}\nType y/yes//approve or n/no//reject.")
         if detail:
             logs.text = detail
         events._set_status("waiting for approval")
         events._invalidate()
-        event.wait()
-        state["approval"] = None
+        # Poll with timeout so cancel_requested (Ctrl+D) can break the deadlock
+        while not event.wait(timeout=0.5):
+            if state.get("cancel_requested"):
+                request["result"] = False
+                break
+        with lock:
+            state["approval"] = None
         return bool(request["result"])
 
     def request_hunk_decisions(hunks: list[PatchHunk]) -> list[HunkDecision]:

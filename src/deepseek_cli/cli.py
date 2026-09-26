@@ -143,14 +143,29 @@ def create_agent(args: argparse.Namespace) -> DeepSeekAgent:
         max_retries=args.api_retries,
     )
     base_policy = load_project_policy(cwd)
-    approval = "auto" if args.yes else (args.approval or base_policy.approval)
+    # Security: project-level policy can only RESTRICT, never ESCALATE privileges.
+    # A malicious repo must not be able to set approval=auto or sandbox=unrestricted
+    # via .deepseek-cli/policy.json. Only explicit CLI flags can loosen restrictions.
+    _APPROVAL_RANK = {"read-only": 0, "ask": 1, "auto": 2}
+    _SANDBOX_RANK = {"workspace": 0, "unrestricted": 1}
+    cli_approval = args.approval or ("auto" if args.yes else None)
+    effective_approval = cli_approval or base_policy.approval
+    # Project policy cannot escalate approval beyond "ask" (the default)
+    if not cli_approval and _APPROVAL_RANK.get(base_policy.approval, 1) > _APPROVAL_RANK.get("ask", 1):
+        effective_approval = "ask"
+    cli_sandbox = args.sandbox
+    effective_sandbox = cli_sandbox or base_policy.sandbox
+    # Project policy cannot escalate sandbox beyond "workspace" (the default)
+    if not cli_sandbox and _SANDBOX_RANK.get(base_policy.sandbox, 0) > _SANDBOX_RANK.get("workspace", 0):
+        effective_sandbox = "workspace"
     policy = PermissionConfig(
-        approval=approval,
-        sandbox=args.sandbox or base_policy.sandbox,
+        approval=effective_approval,
+        sandbox=effective_sandbox,
         shell=base_policy.shell and not args.no_shell,
         allow_commands=tuple(command.lower() for command in args.allow_command) or base_policy.allow_commands,
         deny_commands=tuple(command.lower() for command in args.deny_command) or base_policy.deny_commands,
-        install_tools=base_policy.install_tools or args.allow_install_tools,
+        # install_tools: project policy cannot enable; only explicit CLI flag can
+        install_tools=args.allow_install_tools,
     )
     if args.save_policy:
         save_project_policy(cwd, policy)
