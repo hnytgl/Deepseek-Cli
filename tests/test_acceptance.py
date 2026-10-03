@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import json
+import platform
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -70,6 +71,10 @@ def test_auto_edit_shell_waits_for_approval(project, monkeypatch, approved):
     def run(command, **kwargs):
         executions.append(command)
         return subprocess.CompletedProcess(command, 0, "marker", "")
+    # Older Python versions may run `ver` while detecting Windows. Keep that
+    # platform probe outside the spy so it counts only the approved command.
+    system = platform.system()
+    monkeypatch.setattr("deepseek_cli.tools.platform.system", lambda: system)
     monkeypatch.setattr("deepseek_cli.tools.subprocess.run", run)
     result = agent.tools.run("shell", {"command": "echo marker"})
     assert len(approvals) == 1
