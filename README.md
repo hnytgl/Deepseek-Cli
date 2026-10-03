@@ -10,6 +10,21 @@
 
 ## 更新日志
 
+### 主分支修复（2026-10-03，PR #9）
+
+[PR #9](https://github.com/hnytgl/Deepseek-Cli/pull/9) 已合并到 `main`，补齐 PR #8 的配置、审批和跨平台验收问题；本次未变更软件版本号。
+
+- **auto-edit 审批**：`write_file`、`replace_in_file`、`patch_file`、`apply_file_edits` 均自动批准文件编辑；shell 仍需确认。`--yes` 不绕过只读或项目限制。
+- **项目权限限制**：项目配置、profile 和 `policy.json` 只能收紧用户授权；命令白名单取交集、黑名单累加，`--show-policy` 与实际执行采用相同的权限计算。
+- **配置生效**：未传 CLI 参数时保留 TOML 偏好，修复 profile 与环境变量优先级；配置解析失败明确报错，Python 3.10 自动安装 `tomli`。
+- **项目指令恢复**：启动、恢复会话和 `/replay` 均加载当前工作区的 AGENTS.md 指令，替换旧会话中的系统提示词。
+- **推理与统计**：显式 `--model` 优先于 `--reasoning` 的自动模型选择；流式 usage 按最终快照累计，`--plain` 中 `/cost` 直接显示统计，不发送给模型。
+- **编辑与输出**：四种文件编辑路径保留原有 CRLF；`--json` 的工具日志不污染最终 JSON 输出。
+- **全屏审批取消**：等待文件审批时支持拒绝、`/cancel`、Ctrl+D 和 `/exit`；取消同一批多文件编辑时不写入此前已接受的 hunk。
+- **CI 扩展**：源码测试与干净 wheel 安装分别覆盖三个系统、三个 Python 版本，共 18 个任务；源码测试保存 JUnit 报告。
+
+PR #9 合并前，105 项自动测试以及 [18 个 CI 矩阵任务](https://github.com/hnytgl/Deepseek-Cli/actions/runs/37125178563)全部通过。测试使用模拟 API 和临时工作区；该结果不包含真实模型服务调用。
+
 ### v1.0.0（2026-09-26）
 
 **全面对标 Codex CLI 的正式版本：**
@@ -285,7 +300,7 @@ deepseek --sandbox unrestricted
 进入 `deepseek` 后可以使用这些命令：
 
 - `/help`：显示帮助。
-- `/cost`：显示当前会话的 token 用量和估算费用。
+- `/cost`：显示当前进程累计的 token 用量和估算费用，不产生 API 请求。
 - `/clear`：清空当前对话上下文。
 - `/sessions [关键词]`：列出或搜索已保存会话。
 - `/replay NAME`：把指定会话加载到当前对话，可继续执行后续任务。
@@ -473,6 +488,7 @@ deny = ["rm", "sudo", "format"]
 - `DEEPSEEK_BASE_URL`：可选，默认 `https://api.deepseek.com`。
 - `DEEPSEEK_MODEL`：可选，默认 `deepseek-v4-flash`。
 - `DEEPSEEK_THEME`：可选，TUI 主题。
+- `DEEPSEEK_PROVIDER`：可选，默认 `deepseek`；也可通过 `--provider` 或配置文件指定。
 
 ### DeepSeek 推理模式
 
@@ -514,6 +530,8 @@ Rich、全屏和 `--plain` 交互模式中输入 `/cost` 查看当前进程的 t
 
 ## 本地验证
 
+在仓库根目录执行源码检查：
+
 ```powershell
 python -m pip install -e ".[dev]"
 python -m compileall src tests
@@ -522,6 +540,35 @@ deepseek --help
 deepseek --version
 deepseek --doctor
 ```
+
+仅运行 PR #8 / #9 的验收回归（审批、配置、AGENTS.md、推理参数、usage、JSON、CRLF 和全屏取消）：
+
+```powershell
+python -m pytest tests/test_acceptance.py tests/test_ui_acceptance.py -q
+```
+
+这组测试在 PR #9 中共 45 项，不需要真实 API Key，也不会请求模型服务。审批交互通过模拟终端输入验证，文件修改限定在测试创建的临时目录。
+
+验证发布包的干净安装：
+
+```powershell
+python -m pip install build
+python -m build
+python scripts/verify_wheel.py
+```
+
+`dist/` 中须只保留本次构建的一个 wheel。脚本创建临时 venv、安装 wheel，检查 TOML 运行依赖、配置读取、AGENTS.md 注入、auto-edit 批量编辑及 `--help` / `--version`；成功时输出 `Clean wheel acceptance passed` 并以状态码 0 退出。安装依赖需要联网，但不调用模型服务。
+
+已安装 Git 和 GitHub CLI 的环境可追加 `python scripts/verify_wheel.py --doctor`。`deepseek --doctor` 检查本机工具环境，不能替代上述源码测试和干净安装检查。
+
+### CI 覆盖矩阵
+
+| 检查 | 系统 | Python 版本 | 任务数 | 通过标准 |
+| --- | --- | --- | --- | --- |
+| 源码测试 | Ubuntu、Windows、macOS | 3.10、3.11、3.12 | 9 | compileall、完整 pytest、CLI help/version/doctor 均以 0 退出 |
+| 发布包安装 | Ubuntu、Windows、macOS | 3.10、3.11、3.12 | 9 | sdist/wheel 构建成功，干净 venv 安装及 `verify_wheel.py --doctor` 全部通过 |
+
+两个矩阵均设置 `fail-fast: false`，单项失败后继续收集其他平台结果。源码任务上传 `tests-<系统>-<Python版本>` JUnit 报告；报告可在 [GitHub Actions](https://github.com/hnytgl/Deepseek-Cli/actions/workflows/ci.yml) 对应运行的 Artifacts 中下载。
 
 ## 安装和更新
 
