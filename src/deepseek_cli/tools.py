@@ -18,6 +18,7 @@ from .tools_helpers import (
     apply_unified_patch,
     glob_match,
     read_source,
+    preserve_newlines,
     resolve_workspace_path,
     truncate_output,
     unified_diff,
@@ -67,9 +68,9 @@ class ToolExecutor:
     ) -> None:
         self.cwd = cwd.resolve()
         self.policy = policy or PermissionConfig(approval="auto" if auto_approve else "ask")
-        self.auto_approve = auto_approve or self.policy.auto_approve
+        self.auto_approve = (auto_approve or self.policy.auto_approve) and not self.policy.read_only
         # auto-edit: auto-approve file edits (write/replace/patch), still ask for shell
-        self.auto_edit = auto_edit
+        self.auto_edit = (auto_edit or self.policy.approval == "auto-edit") and not self.policy.read_only
         self.ask = ask or self._default_ask
         self.approve_diff = approve_diff
         self.approve_file_edits = approve_file_edits
@@ -313,6 +314,7 @@ class ToolExecutor:
         path = self._resolve_checked_path(str(arguments["path"]))
         content = str(arguments["content"])
         old = _read_source(path) if path.exists() else ""
+        content = preserve_newlines(old, content)
         diff = _unified_diff(path, old, content)
         self._confirm_diff(f"Apply write to file: {path}", diff or f"Create empty file: {path}")
         self.create_checkpoint()
@@ -366,7 +368,8 @@ class ToolExecutor:
             # Use universal newlines for diff/hunk comparison since model content
             # is always LF. The write path uses _atomic_write which preserves
             # whatever newline style is in the final content.
-            old = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+            old = _read_source(path) if path.exists() else ""
+            content = preserve_newlines(old, content)
             diff = _unified_diff(path, old, content) or f"Create empty file: {path}\n"
             hunks = build_hunks(path, old, content)
             review_items.append((path, diff))
@@ -374,7 +377,7 @@ class ToolExecutor:
             all_hunks.extend(hunks)
         if not planned:
             raise ToolError("No file edits were provided.")
-        if self.auto_approve:
+        if self.auto_approve or self.auto_edit:
             accepted_files = [True for _ in planned]
             accepted_hunks: list[HunkDecision] = [True for _ in all_hunks]
         elif self.approve_hunks and all_hunks:
@@ -411,6 +414,7 @@ class ToolExecutor:
                 content_to_write = content
             path.parent.mkdir(parents=True, exist_ok=True)
             _atomic_write(path, content_to_write)
+            self.track_modified_file(path)
             applied += 1
         return ToolResult(applied > 0, f"Applied {applied} file edit(s); rejected={rejected}.")
 
@@ -699,5 +703,4 @@ class ToolExecutor:
             output_lines.append("")
 
         return ToolResult(True, "\n".join(output_lines))
-
 

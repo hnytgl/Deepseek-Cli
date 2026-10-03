@@ -14,6 +14,14 @@ class PolicyViolation(RuntimeError):
 PermissionError = PolicyViolation
 
 
+def normalize_approval(value: str) -> str:
+    aliases = {"suggest": "read-only", "full-auto": "auto"}
+    normalized = aliases.get(value, value)
+    if normalized not in {"read-only", "ask", "auto-edit", "auto"}:
+        raise PolicyViolation(f"Invalid approval mode: {value}")
+    return normalized
+
+
 @dataclass(frozen=True)
 class PermissionConfig:
     approval: str = "ask"
@@ -25,11 +33,11 @@ class PermissionConfig:
 
     @property
     def auto_approve(self) -> bool:
-        return self.approval == "auto"
+        return normalize_approval(self.approval) == "auto"
 
     @property
     def read_only(self) -> bool:
-        return self.approval == "read-only"
+        return normalize_approval(self.approval) == "read-only"
 
     def check_path(self, cwd: Path, path: Path) -> None:
         if self.sandbox == "unrestricted":
@@ -79,14 +87,60 @@ class PermissionConfig:
 
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> "PermissionConfig":
+        for key in ("shell", "install_tools"):
+            if key in data and not isinstance(data[key], bool):
+                raise PolicyViolation(f"{key} must be a boolean.")
+        for key in ("allow_commands", "deny_commands"):
+            if key in data and (not isinstance(data[key], list) or not all(isinstance(item, str) for item in data[key])):
+                raise PolicyViolation(f"{key} must be a list of command names.")
+        sandbox = str(data.get("sandbox") or "workspace")
+        if sandbox not in {"workspace", "unrestricted"}:
+            raise PolicyViolation(f"Invalid sandbox: {sandbox}")
         return cls(
-            approval=str(data.get("approval") or "ask"),
-            sandbox=str(data.get("sandbox") or "workspace"),
+            approval=normalize_approval(str(data.get("approval") or "ask")),
+            sandbox=sandbox,
             shell=bool(data.get("shell", True)),
             allow_commands=tuple(str(item).lower() for item in data.get("allow_commands", []) or []),
             deny_commands=tuple(str(item).lower() for item in data.get("deny_commands", []) or []),
             install_tools=bool(data.get("install_tools", False)),
         )
+
+
+def restrict_policy(policy: PermissionConfig, data: dict[str, object]) -> PermissionConfig:
+    """Intersect an untrusted project's restrictions with authorized settings."""
+    approval = normalize_approval(policy.approval)
+    ranks = {"read-only": 0, "ask": 1, "auto-edit": 2, "auto": 3}
+    if "approval" in data:
+        requested = normalize_approval(str(data["approval"]))
+        approval = min((approval, requested), key=ranks.__getitem__)
+    sandbox = policy.sandbox
+    if "sandbox" in data:
+        requested_sandbox = str(data["sandbox"])
+        if requested_sandbox not in {"workspace", "unrestricted"}:
+            raise PolicyViolation(f"Invalid sandbox: {requested_sandbox}")
+        if requested_sandbox == "workspace":
+            sandbox = "workspace"
+    shell = policy.shell and bool(data.get("shell", True))
+    allow = tuple(_normalized_command(item) for item in policy.allow_commands)
+    deny = tuple(_normalized_command(item) for item in policy.deny_commands)
+    for key in ("allow_commands", "deny_commands"):
+        if key in data and not isinstance(data[key], (list, tuple)):
+            raise PolicyViolation(f"{key} must be a list of command names.")
+    requested_allow = tuple(_normalized_command(str(item)) for item in data.get("allow_commands", []) or [])
+    if requested_allow:
+        if allow:
+            allow = tuple(item for item in allow if item in requested_allow)
+            # Empty intersection must not turn into the unrestricted empty list.
+            if not allow:
+                shell = False
+        else:
+            allow = requested_allow
+    deny = tuple(dict.fromkeys((*deny, *(_normalized_command(str(item)) for item in data.get("deny_commands", []) or []))))
+    return PermissionConfig(
+        approval=approval, sandbox=sandbox, shell=shell,
+        allow_commands=allow, deny_commands=deny,
+        install_tools=policy.install_tools and bool(data.get("install_tools", True)),
+    )
 
 
 def command_name(command: str) -> str:

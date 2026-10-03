@@ -9,8 +9,8 @@ from pathlib import Path
 from . import __version__
 from .agent import AgentConfig, DeepSeekAgent
 from .api import DEFAULT_MODEL, DeepSeekAPIError, DeepSeekClient
-from .config import AppConfig, load_config, apply_profile
-from .policy import PermissionConfig, PermissionError as PolicyError, load_project_policy, save_project_policy
+from .config import AppConfig, ConfigError, load_config
+from .policy import PermissionConfig, PermissionError as PolicyError, load_project_policy, save_project_policy, project_policy_path, normalize_approval, restrict_policy
 from .session import SessionError, SessionStore
 from .theme import THEMES
 from .tools import ToolExecutor
@@ -115,40 +115,40 @@ def build_parser() -> argparse.ArgumentParser:
         help="List saved sessions, optionally filtering by text, then exit.",
     )
     parser.add_argument("--replay-session", metavar="NAME", help="Print a saved session transcript and exit.")
-    parser.add_argument("--no-stream", action="store_true", help="Disable streaming API responses.")
-    parser.add_argument("--max-steps", type=positive_int, default=128, help="Maximum model/tool loop steps.")
+    parser.add_argument("--no-stream", action="store_true", default=None, help="Disable streaming API responses.")
+    parser.add_argument("--max-steps", type=positive_int, default=None, help="Maximum model/tool loop steps (default: 128).")
     parser.add_argument(
         "--max-context-chars",
         type=positive_int,
-        default=200_000,
+        default=None,
         help="Approximate maximum conversation context characters sent to the model.",
     )
-    parser.add_argument("--temperature", type=float, default=0.2, help="Sampling temperature.")
-    parser.add_argument("-q", "--quiet", action="store_true", help="Quiet mode: minimal output, suitable for scripting.")
+    parser.add_argument("--temperature", type=float, default=None, help="Sampling temperature (default: 0.2).")
+    parser.add_argument("-q", "--quiet", action="store_true", default=None, help="Quiet mode: minimal output, suitable for scripting.")
     parser.add_argument("--json", dest="json_output", action="store_true", help="Output result as JSON (for scripting/CI). Implies --quiet.")
     parser.add_argument("--plain", action="store_true", help="Use plain input/output instead of the Rich TUI.")
     parser.add_argument("--fullscreen", action="store_true", help="Use an alternate full-screen terminal surface.")
     parser.add_argument(
         "--reasoning", action="store_true",
-        help="Enable DeepSeek reasoning mode (uses deepseek-reasoner model with thinking budget).",
+        help="Enable reasoning mode using the configured reasoning model (default: deepseek-v4-pro).",
     )
     parser.add_argument(
-        "--thinking-budget", type=positive_int, default=4096,
+        "--thinking-budget", type=positive_int, default=None,
         help="Max thinking tokens for reasoning mode (default: 4096).",
     )
     parser.add_argument(
         "--theme",
         choices=sorted(THEMES),
-        default=os.getenv("DEEPSEEK_THEME", "default"),
+        default=None,
         help="TUI color theme. Can also be set with DEEPSEEK_THEME.",
     )
     parser.add_argument(
         "--layout",
         choices=["balanced", "logs-right", "stacked"],
-        default="balanced",
+        default=None,
         help="Fullscreen split-pane layout.",
     )
-    parser.add_argument("--expanded-output", action="store_true", help="Show full tool output by default instead of compact summaries.")
+    parser.add_argument("--expanded-output", action="store_true", default=None, help="Show full tool output by default instead of compact summaries.")
     parser.add_argument("--doctor", action="store_true", help="Check local installation requirements.")
     parser.add_argument(
         "--completions", metavar="SHELL", choices=["bash", "zsh", "fish"],
@@ -165,6 +165,54 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def resolve_settings(args: argparse.Namespace, cwd: Path) -> AppConfig:
+    config = load_config(cwd, profile_name=args.profile)
+    defaults = {
+        "max_steps": config.max_steps,
+        "max_context_chars": config.max_context_chars,
+        "temperature": config.temperature,
+        "no_stream": not config.stream,
+        "thinking_budget": config.reasoning.thinking_budget,
+        "quiet": config.quiet,
+        "theme": config.theme or "default",
+        "layout": config.layout or "balanced",
+        "expanded_output": config.expanded_output,
+    }
+    for key, value in defaults.items():
+        if getattr(args, key) is None:
+            setattr(args, key, value)
+    args.quiet = bool(args.quiet or args.json_output)
+    for key in ("max_steps", "max_context_chars", "thinking_budget"):
+        value = getattr(args, key)
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise ConfigError(f"{key} must be a positive integer.")
+    if args.theme not in THEMES:
+        raise ConfigError(f"Invalid theme: {args.theme}")
+    if args.layout not in {"balanced", "logs-right", "stacked"}:
+        raise ConfigError(f"Invalid layout: {args.layout}")
+    return config
+
+
+def resolve_permissions(args: argparse.Namespace, cwd: Path, config: AppConfig) -> PermissionConfig:
+    # CLI/user settings grant permissions; project files may only restrict them.
+    raw_approval = args.approval or ("full-auto" if args.yes else None) or config.approval or "ask"
+    sandbox = args.sandbox or config.sandbox or "workspace"
+    if sandbox not in {"workspace", "unrestricted"}:
+        raise PolicyError(f"Invalid sandbox: {sandbox}")
+    policy = PermissionConfig(
+        approval=normalize_approval(raw_approval),
+        sandbox=sandbox, shell=not args.no_shell,
+        allow_commands=tuple(c.lower() for c in args.allow_command) or tuple(config.shell.allow),
+        deny_commands=tuple(c.lower() for c in args.deny_command) or tuple(config.shell.deny),
+        install_tools=args.allow_install_tools,
+    )
+    for constraints in config.project_permissions:
+        policy = restrict_policy(policy, constraints)
+    if project_policy_path(cwd).exists():
+        policy = restrict_policy(policy, load_project_policy(cwd).to_dict())
+    return policy
+
+
 def create_agent(args: argparse.Namespace) -> DeepSeekAgent:
     cwd = resolve_cwd(args.cwd)
     if not cwd.exists():
@@ -172,17 +220,12 @@ def create_agent(args: argparse.Namespace) -> DeepSeekAgent:
     if not cwd.is_dir():
         raise SystemExit(f"Workspace is not a directory: {cwd}")
 
-    # Load config file (user + project level)
-    file_config = load_config(cwd)
-    # Apply named profile if specified (--profile or config active_profile)
-    profile_name = args.profile or file_config.active_profile
-    if profile_name:
-        file_config = apply_profile(file_config, profile_name)
+    file_config = resolve_settings(args, cwd)
 
     # Resolve model: CLI > env > config file > default
     model = args.model or file_config.model or None
     # Reasoning mode: switch to pro model (thinking mode)
-    if args.reasoning or file_config.reasoning.enabled:
+    if not args.model and (args.reasoning or (file_config.reasoning.enabled and not os.getenv("DEEPSEEK_MODEL"))):
         model = file_config.reasoning.model or "deepseek-v4-pro"
 
     client = DeepSeekClient.from_env(
@@ -191,48 +234,14 @@ def create_agent(args: argparse.Namespace) -> DeepSeekAgent:
         model=model,
         timeout=args.api_timeout,
         max_retries=args.api_retries,
-        provider=args.provider,
+        provider=args.provider or file_config.provider or None,
     )
 
-    # Map Codex-style approval modes to internal policy
-    _APPROVAL_MAP = {
-        "suggest": "read-only",
-        "auto-edit": "ask",      # auto-approve file edits, ask for shell
-        "full-auto": "auto",
-        "ask": "ask",
-        "auto": "auto",
-        "read-only": "read-only",
-    }
-    base_policy = load_project_policy(cwd)
-    # Security: project-level policy can only RESTRICT, never ESCALATE privileges.
-    _APPROVAL_RANK = {"read-only": 0, "ask": 1, "auto": 2}
-    _SANDBOX_RANK = {"workspace": 0, "unrestricted": 1}
-    raw_approval = args.approval or ("full-auto" if args.yes else None) or file_config.approval
-    cli_approval = _APPROVAL_MAP.get(raw_approval, raw_approval) if raw_approval else None
-    effective_approval = cli_approval or base_policy.approval
-    if not cli_approval and _APPROVAL_RANK.get(base_policy.approval, 1) > _APPROVAL_RANK.get("ask", 1):
-        effective_approval = "ask"
-    cli_sandbox = args.sandbox or (file_config.sandbox if file_config.sandbox else None)
-    effective_sandbox = cli_sandbox or base_policy.sandbox
-    if not cli_sandbox and _SANDBOX_RANK.get(base_policy.sandbox, 0) > _SANDBOX_RANK.get("workspace", 0):
-        effective_sandbox = "workspace"
-
-    # Merge shell allow/deny from config file + CLI flags
-    allow_cmds = tuple(c.lower() for c in args.allow_command) or tuple(file_config.shell.allow) or base_policy.allow_commands
-    deny_cmds = tuple(c.lower() for c in args.deny_command) or tuple(file_config.shell.deny) or base_policy.deny_commands
-
-    policy = PermissionConfig(
-        approval=effective_approval,
-        sandbox=effective_sandbox,
-        shell=base_policy.shell and not args.no_shell,
-        allow_commands=allow_cmds,
-        deny_commands=deny_cmds,
-        install_tools=args.allow_install_tools,
-    )
+    policy = resolve_permissions(args, cwd, file_config)
     if args.save_policy:
         save_project_policy(cwd, policy)
     # auto-edit mode: auto-approve file edits, still ask for shell
-    is_auto_edit = (raw_approval == "auto-edit")
+    is_auto_edit = policy.approval == "auto-edit"
 
     # OS-level sandbox for shell commands
     from .sandbox import create_sandbox
@@ -240,7 +249,7 @@ def create_agent(args: argparse.Namespace) -> DeepSeekAgent:
 
     tools = ToolExecutor(
         cwd,
-        auto_approve=args.yes or raw_approval == "full-auto",
+        auto_approve=policy.auto_approve,
         auto_edit=is_auto_edit,
         ask=RichToolConfirmer(),
         approve_diff=RichDiffConfirmer(),
@@ -252,6 +261,7 @@ def create_agent(args: argparse.Namespace) -> DeepSeekAgent:
     messages = []
     if args.resume or args.session:
         messages = SessionStore.default().load(args.session, latest=args.resume and not args.session)
+        messages = [message for message in messages if message.get("role") != "system"]
     return DeepSeekAgent(
         client=client,
         tools=tools,
@@ -262,6 +272,7 @@ def create_agent(args: argparse.Namespace) -> DeepSeekAgent:
             temperature=args.temperature,
             stream=not args.no_stream,
             thinking_budget=args.thinking_budget,
+            quiet=args.quiet,
         ),
         messages=messages,
         agents_md=file_config.agents_md,
@@ -299,7 +310,10 @@ def run_interactive(
         if prompt in {"/exit", "/quit"}:
             return 0
         if prompt == "/help":
-            print("/sessions [query], /replay NAME, /clear, /exit")
+            print("/cost, /sessions [query], /replay NAME, /clear, /exit")
+            continue
+        if prompt == "/cost":
+            print(agent.get_usage_summary())
             continue
         if prompt == "/sessions" or prompt.startswith("/sessions "):
             print(format_sessions(store, prompt.removeprefix("/sessions").strip()))
@@ -314,7 +328,7 @@ def run_interactive(
             if not messages:
                 print(f"Session not found: {name}", file=sys.stderr)
                 continue
-            agent.messages = messages
+            agent.restore_messages(messages)
             print(f"Loaded session: {name}")
             continue
         if prompt == "/clear":
@@ -378,25 +392,18 @@ def main(argv: list[str] | None = None) -> int:
     if args.show_policy:
         cwd = resolve_cwd(args.cwd)
         try:
-            base_policy = load_project_policy(cwd)
-        except PolicyError as exc:
+            config = resolve_settings(args, cwd)
+            policy = resolve_permissions(args, cwd, config)
+        except (PolicyError, ConfigError) as exc:
             print(f"Error: {exc}", file=sys.stderr)
             return 2
-        policy = PermissionConfig(
-            approval="auto" if args.yes else (args.approval or base_policy.approval),
-            sandbox=args.sandbox or base_policy.sandbox,
-            shell=base_policy.shell and not args.no_shell,
-            allow_commands=tuple(command.lower() for command in args.allow_command) or base_policy.allow_commands,
-            deny_commands=tuple(command.lower() for command in args.deny_command) or base_policy.deny_commands,
-            install_tools=base_policy.install_tools or args.allow_install_tools,
-        )
         import json
 
         print(json.dumps(policy.to_dict(), ensure_ascii=False, indent=2))
         return 0
     try:
         agent = create_agent(args)
-    except (DeepSeekAPIError, PolicyError, SessionError) as exc:
+    except (DeepSeekAPIError, PolicyError, SessionError, ConfigError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
 

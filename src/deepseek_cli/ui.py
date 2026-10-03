@@ -288,7 +288,7 @@ def _run_loop(
             if not messages:
                 console.print(f"[{theme.warning}]Session not found: {name}[/{theme.warning}]")
                 continue
-            agent.messages = messages
+            agent.restore_messages(messages)
             console.print(f"Loaded session: {name}")
             continue
         if prompt == "/logs":
@@ -542,12 +542,14 @@ def run_split_pane_interactive(
     activity = TextArea(text="Ready. Type a task, /sessions, /replay, /review, or /help.", scrollbar=True, focusable=True, wrap_lines=True)
     input_box = TextArea(height=3, prompt="DeepSeek> ", multiline=False)
     bindings = KeyBindings()
-    state: dict[str, Any] = {"running": False, "cancel_requested": False, "last_prompt": "", "approval": None}
+    state: dict[str, Any] = {"running": False, "cancel_requested": False, "last_prompt": "", "approval": None, "exit_requested": False}
     lock = threading.Lock()
     agent.config.cancel_check = lambda: bool(state["cancel_requested"])
     store = SessionStore.default()
 
     def request_decision(prompt: str, detail: str = "") -> bool:
+        if state["cancel_requested"]:
+            return False
         event = threading.Event()
         request = {"prompt": prompt, "detail": detail, "event": event, "result": False}
         with lock:
@@ -564,14 +566,18 @@ def run_split_pane_interactive(
                 break
         with lock:
             state["approval"] = None
-        return bool(request["result"])
+        return bool(request["result"]) and not state["cancel_requested"]
 
     def request_hunk_decisions(hunks: list[PatchHunk]) -> list[HunkDecision]:
         decisions: list[HunkDecision] = []
         for index, hunk in enumerate(hunks, start=1):
+            if state["cancel_requested"]:
+                return [False] * len(hunks)
             detail = f"Hunk {index}/{len(hunks)}: {hunk.path}\n\n{hunk.diff}"
             accepted = request_decision("Accept this hunk?", detail)
             decisions.append(accepted)
+        if state["cancel_requested"]:
+            return [False] * len(hunks)
         return decisions
 
     agent.tools.ask = request_decision
@@ -582,6 +588,7 @@ def run_split_pane_interactive(
     def _(event) -> None:
         if state["running"]:
             state["cancel_requested"] = True
+            state["exit_requested"] = True
             events._append_activity("Cancel requested. Exit after current step returns.")
             event.app.invalidate()
         else:
@@ -645,6 +652,8 @@ def run_split_pane_interactive(
                     on_turn_done()
                 events._set_status("ready")
                 events._invalidate()
+                if state["exit_requested"]:
+                    app.exit(result=0)
 
         threading.Thread(target=worker, daemon=True).start()
         events._invalidate()
@@ -663,6 +672,14 @@ def run_split_pane_interactive(
             state["cancel_requested"] = True
             request["result"] = False
             events._append_activity("Approval rejected and cancel requested.")
+        elif normalized in {"/exit", "/quit"}:
+            state["cancel_requested"] = True
+            state["exit_requested"] = True
+            request["result"] = False
+        elif normalized == "/cost":
+            events._append_activity(agent.get_usage_summary())
+            events._invalidate()
+            return True
         elif normalized == "/expand":
             events.compact = False
             logs.text = "\n\n".join(events.full_logs) or logs.text
@@ -736,13 +753,14 @@ def run_split_pane_interactive(
                 events._append_activity(f"Session not found: {name}")
                 events._invalidate()
                 return True
-            agent.messages = messages
+            agent.restore_messages(messages)
             activity.text = f"Loaded session: {name}"
             events._invalidate()
             return True
         if prompt in {"/exit", "/quit"}:
             if state["running"]:
                 state["cancel_requested"] = True
+                state["exit_requested"] = True
                 events._append_activity("Cancel requested. Exit will happen after the current step returns.")
                 events._invalidate()
                 return True
