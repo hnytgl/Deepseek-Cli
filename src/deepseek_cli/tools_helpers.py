@@ -54,6 +54,13 @@ def read_source(path: Path) -> str:
         ) from exc
 
 
+def preserve_newlines(original: str, content: str) -> str:
+    """Preserve a uniformly CRLF source when model edits arrive as LF."""
+    if "\r\n" in original and "\n" not in original.replace("\r\n", ""):
+        return content.replace("\r\n", "\n").replace("\n", "\r\n")
+    return content
+
+
 def atomic_write(path: Path, content: str) -> None:
     """Write content to path atomically via temp file + os.replace.
 
@@ -61,6 +68,8 @@ def atomic_write(path: Path, content: str) -> None:
     (no translation). If the process is killed mid-write, the original
     file remains intact.
     """
+    if path.exists():
+        content = preserve_newlines(read_source(path), content)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
     try:
@@ -104,7 +113,7 @@ def glob_match(filename: str, pattern: str) -> bool:
 
 def apply_unified_patch(original: str, patch_text: str) -> str:
     """Apply a unified diff patch to original text."""
-    lines = original.splitlines(keepends=True)
+    lines = original.replace("\r\n", "\n").splitlines(keepends=True)
     if lines and not lines[-1].endswith("\n"):
         lines[-1] += "\n"
         trailing_newline = False
@@ -118,9 +127,13 @@ def apply_unified_patch(original: str, patch_text: str) -> str:
         raise ToolError("No valid hunks found in patch. Expected @@ -N,M +N,M @@ headers.")
 
     for hunk in sorted(hunks, key=lambda h: h["orig_start"], reverse=True):
-        start = hunk["orig_start"] - 1
+        start = hunk["orig_start"] if hunk["orig_count"] == 0 else hunk["orig_start"] - 1
         orig_lines = hunk["orig_lines"]
         new_lines = hunk["new_lines"]
+        if len(orig_lines) != hunk["orig_count"] or len(new_lines) != hunk["new_count"]:
+            raise ToolError("Patch hunk line counts do not match its header.")
+        if start < 0 or start > len(result):
+            raise ToolError("Patch hunk starts outside the file.")
 
         actual = result[start:start + len(orig_lines)]
         if not fuzzy_match(actual, orig_lines):
@@ -134,7 +147,7 @@ def apply_unified_patch(original: str, patch_text: str) -> str:
     patched = "".join(result)
     if not trailing_newline and patched.endswith("\n"):
         patched = patched[:-1]
-    return patched
+    return preserve_newlines(original, patched)
 
 
 def parse_hunks(patch_text: str) -> list[dict[str, Any]]:

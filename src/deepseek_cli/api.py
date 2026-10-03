@@ -54,7 +54,7 @@ class DeepSeekClient:
         # Resolve provider → base_url mapping
         resolved_provider = provider or os.getenv("DEEPSEEK_PROVIDER", "deepseek")
         if base_url is None:
-            base_url = PROVIDERS.get(resolved_provider, "")
+            base_url = os.getenv("DEEPSEEK_BASE_URL") or PROVIDERS.get(resolved_provider, "")
         if not base_url:
             base_url = os.getenv("DEEPSEEK_BASE_URL") or DEFAULT_BASE_URL
 
@@ -143,6 +143,7 @@ class DeepSeekClient:
             "model": self.model,
             "stream": True,
             **payload,
+            "stream_options": {"include_usage": True, **payload.get("stream_options", {})},
         }
         body = json.dumps(request_payload).encode("utf-8")
         request = urllib.request.Request(

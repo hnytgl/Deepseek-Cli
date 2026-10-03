@@ -48,6 +48,7 @@ class AgentConfig:
     temperature: float = 0.2
     stream: bool = True
     thinking_budget: int = 4096  # max thinking tokens for reasoning mode
+    quiet: bool = False
     cancel_check: Callable[[], bool] | None = None
 
 
@@ -81,8 +82,19 @@ class DeepSeekAgent:
     total_requests: int = field(default=0, init=False)
 
     def __post_init__(self) -> None:
-        if not self.messages or self.messages[0].get("role") != "system":
-            self.messages.insert(0, {"role": "system", "content": build_system_prompt(self.agents_md)})
+        # Direct API callers may supply a custom system prompt. Session restore
+        # removes saved system messages before this method is called.
+        if not self.agents_md and self.messages and self.messages[0].get("role") == "system":
+            return
+        history = [message for message in self.messages if message.get("role") != "system"]
+        self.messages = [{"role": "system", "content": build_system_prompt(self.agents_md)}, *history]
+
+    def restore_messages(self, messages: list[dict[str, Any]]) -> None:
+        from .config import _load_agents_md
+
+        self.agents_md = _load_agents_md(self.config.cwd)
+        self.messages = [message for message in messages if message.get("role") != "system"]
+        self.__post_init__()
 
     def get_usage_summary(self) -> str:
         """Return a human-readable summary of token usage for /cost command."""
@@ -241,13 +253,13 @@ class DeepSeekAgent:
         content_parts: list[str] = []
         reasoning_parts: list[str] = []
         tool_call_parts: dict[int, dict[str, Any]] = {}
+        final_usage: dict[str, Any] | None = None
 
         for event in self.client.chat_stream(payload):
             # Track usage from final streaming chunk (DeepSeek sends usage in last event)
             usage = event.get("usage")
             if isinstance(usage, dict):
-                self.total_prompt_tokens += int(usage.get("prompt_tokens") or 0)
-                self.total_completion_tokens += int(usage.get("completion_tokens") or 0)
+                final_usage = usage
             choices = event.get("choices")
             if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
                 continue
@@ -287,6 +299,9 @@ class DeepSeekAgent:
             message["reasoning_content"] = "".join(reasoning_parts)
         if tool_call_parts:
             message["tool_calls"] = [tool_call_parts[index] for index in sorted(tool_call_parts)]
+        if final_usage is not None:
+            self.total_prompt_tokens += int(final_usage.get("prompt_tokens") or 0)
+            self.total_completion_tokens += int(final_usage.get("completion_tokens") or 0)
         self.total_requests += 1
         return message
 
@@ -296,6 +311,8 @@ class DeepSeekAgent:
             normalized["content"] = message.get("content")
         if message.get("tool_calls"):
             normalized["tool_calls"] = message["tool_calls"]
+        if message.get("reasoning_content") is not None:
+            normalized["reasoning_content"] = message["reasoning_content"]
         return normalized
 
     def _execute_tool_call(self, tool_call: dict[str, Any]) -> dict[str, Any]:
@@ -334,12 +351,12 @@ class DeepSeekAgent:
 
         if self.events:
             self.events.on_tool_start(name, arguments)
-        else:
+        elif not self.config.quiet:
             print(f"\n[tool] {name} {json.dumps(arguments, ensure_ascii=False)}")
         result = self.tools.run(name, arguments)
         if self.events:
             self.events.on_tool_result(name, result.ok, result.output)
-        else:
+        elif not self.config.quiet:
             print(result.output[:4000])
             if len(result.output) > 4000:
                 print("[tool output truncated in terminal]")

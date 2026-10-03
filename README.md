@@ -358,7 +358,7 @@ Shell 控制：
 - `--save-policy`：把当前有效权限策略保存到项目。
 - `--show-policy`：打印当前有效权限策略。
 
-> **安全说明**：项目级 `.deepseek-cli/policy.json` 只能收紧权限，不能放宽。恶意仓库无法通过 policy.json 提权到 full-auto 或 unrestricted。
+> **安全说明**：项目级 `.deepseek-cli/policy.json`、`config.toml` 及其中的 profile 只能收紧权限。自动执行权限由命令行参数或用户级配置授权；项目白名单与用户白名单取交集，黑名单累加，项目限制不会被 `--yes` 绕过。`--show-policy` 显示实际生效的同一套权限。
 
 白名单优先约束可执行命令集合，黑名单用于拦截明确不希望模型执行的命令。复合命令中的每一段都会检查，例如 `python --version && git status` 会同时检查 `python` 和 `git`。命令名按可执行文件名识别，并兼容 Windows 的 `.exe`、`.cmd`、`.bat`、`.com` 后缀。
 
@@ -368,7 +368,7 @@ Shell 控制：
 .deepseek-cli/policy.json
 ```
 
-再次在该项目运行 `deepseek` 时会自动加载这个策略。命令行参数会覆盖项目策略。
+再次在该项目运行 `deepseek` 时会自动加载这个策略。命令行参数设置授权上限，项目策略可进一步收紧。
 
 ## 补丁编辑和多文件 Review
 
@@ -425,7 +425,7 @@ gh auth status
 # ~/.deepseek-cli/config.toml
 model = "deepseek-flash"
 approval = "auto-edit"
-theme = "dark"
+theme = "ocean"
 sandbox = "workspace"
 max_steps = 64
 temperature = 0.2
@@ -437,14 +437,16 @@ thinking_budget = 4096
 
 [shell]
 allow = ["git", "npm", "python", "pytest", "ruff"]
-deny = ["rm -rf", "sudo", "format"]
+deny = ["rm", "sudo", "format"]
 ```
 
-优先级：CLI 参数 > 环境变量 > 项目配置 > 用户配置 > 默认值。
+普通偏好的优先级：CLI 参数 > 环境变量 > 项目配置 > 用户配置 > 默认值。Profile 在对应文件层级内生效，环境变量和显式 CLI 参数仍优先。权限设置遵循上述“只收紧”规则；要默认启用 `auto-edit`，请放在用户级配置或显式传入 CLI 参数。
+
+`max_steps`、`max_context_chars`、`temperature`、`stream`、`quiet`、`theme`、`layout`、`expanded_output` 以及 `[reasoning].thinking_budget` 均在未提供对应 CLI 参数时生效。配置解析错误会明确报错；Python 3.10 安装包自动包含 `tomli`。
 
 ### AGENTS.md 项目指令
 
-在项目根目录放置 `AGENTS.md`（或 `DEEPSEEK.md`），CLI 启动时自动读取并注入系统提示词：
+在工作区目录放置项目指令，按 `AGENTS.md`、`.deepseek-cli/AGENTS.md`、`DEEPSEEK.md` 顺序读取首个非空且可 UTF-8 解码的文件，最多 8192 个字符。CLI 启动、恢复会话及 `/replay` 时注入当前工作区指令，替换旧会话的系统提示词；从子目录启动时可通过 `--cwd` 指定根目录：
 
 ```markdown
 # AGENTS.md
@@ -486,9 +488,11 @@ deepseek --reasoning --thinking-budget 8192 "调试这个并发死锁问题"
 
 推理模式会显示模型的思考过程（reasoning_content），帮助你理解它的分析逻辑。
 
+显式 `--model` 优先于配置和 `--reasoning` 的自动模型选择；预算从 CLI 或 `[reasoning].thinking_budget` 读取。目标服务是否接受推理预算参数仍需以所用模型/API 的兼容性验证为准。
+
 ### 费用统计
 
-交互模式中输入 `/cost` 查看当前会话的 token 用量：
+Rich、全屏和 `--plain` 交互模式中输入 `/cost` 查看当前进程的 token 用量，不产生 API 请求。流式请求会请求返回 usage，统计包括工具往返中的模型请求：
 
 ```
 ┌ usage & cost ─────────────────────┐
@@ -501,7 +505,7 @@ deepseek --reasoning --thinking-budget 8192 "调试这个并发死锁问题"
 └───────────────────────────────────┘
 ```
 
-DeepSeek 定价参考：flash 输入 ¥1/百万 token，输出 ¥2/百万 token；v4-pro（推理）输入 ¥4，输出 ¥16。
+费用使用内置近似系数：flash 输入 ¥1/百万 token，输出 ¥2/百万 token；v4-pro（推理）输入 ¥4，输出 ¥16，不等于实际账单。`/clear` 只清上下文，保留当前进程的累计统计；恢复保存会话不恢复历史费用统计。
 
 ### API 稳定性参数
 

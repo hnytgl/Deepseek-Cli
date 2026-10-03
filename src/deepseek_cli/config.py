@@ -10,7 +10,7 @@ Loads settings from (in priority order, later overrides earlier):
 Example config.toml:
     model = "deepseek-chat"
     approval = "auto-edit"
-    theme = "dark"
+    theme = "ocean"
     sandbox = "workspace"
 
     [reasoning]
@@ -41,6 +41,10 @@ except ImportError:
 
 _CONFIG_DIR_NAME = ".deepseek-cli"
 _CONFIG_FILE_NAME = "config.toml"
+
+
+class ConfigError(ValueError):
+    """Invalid configuration; report the path without exposing its contents."""
 
 
 def user_config_dir() -> Path:
@@ -78,14 +82,15 @@ class AppConfig:
     """Application configuration loaded from config files."""
     # Core
     model: str = ""
-    api_key: str = ""
+    api_key: str = field(default="", repr=False)
     base_url: str = ""
     provider: str = ""  # deepseek | ollama | lmstudio | openai | openrouter
     approval: str = ""  # suggest | auto-edit | full-auto
     sandbox: str = ""  # workspace | unrestricted
     theme: str = ""
-    max_steps: int = 0
-    temperature: float = 0.0
+    max_steps: int = 128
+    max_context_chars: int = 200_000
+    temperature: float = 0.2
     stream: bool = True
 
     # Reasoning
@@ -108,22 +113,25 @@ class AppConfig:
 
     # MCP servers
     mcp_servers: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Project files are untrusted: keep their permission constraints separate
+    # from the user-level preferences which may authorize automatic execution.
+    project_permissions: list[dict[str, Any]] = field(default_factory=list, repr=False)
 
 
 def _load_toml(path: Path) -> dict[str, Any]:
-    """Load a TOML file, returning empty dict on any failure."""
+    """Load a TOML file, failing visibly rather than discarding preferences."""
     if not path.exists():
         return {}
     if tomllib is None:
-        return {}
+        raise ConfigError("TOML support is unavailable; install the package's runtime dependencies.")
     try:
         with open(path, "rb") as f:
             return tomllib.load(f)
-    except Exception:
-        return {}
+    except (OSError, ValueError) as exc:
+        raise ConfigError(f"Could not read TOML configuration: {path}") from exc
 
 
-def load_config(cwd: Path | None = None) -> AppConfig:
+def load_config(cwd: Path | None = None, *, profile_name: str | None = None) -> AppConfig:
     """
     Load configuration from all sources (files + env vars).
 
@@ -132,14 +140,25 @@ def load_config(cwd: Path | None = None) -> AppConfig:
     """
     config = AppConfig()
 
-    # 1. User-level config
     user_data = _load_toml(user_config_path())
+    project_data = _load_toml(project_config_path(cwd)) if cwd else {}
+    selected_profile = profile_name or project_data.get("active_profile") or user_data.get("active_profile")
     _apply_dict(config, user_data)
-
-    # 2. Project-level config (overrides user)
-    if cwd:
-        project_data = _load_toml(project_config_path(cwd))
-        _apply_dict(config, project_data)
+    if selected_profile:
+        if profile_name or selected_profile == user_data.get("active_profile"):
+            apply_profile(config, selected_profile)
+        else:
+            # A repository selecting the name of a privileged user profile is
+            # not authorization to activate that profile's elevated permissions.
+            profile = config.profiles.get(selected_profile, {})
+            _apply_project_dict(config, profile)
+    _apply_project_dict(config, project_data)
+    if selected_profile:
+        project_profiles = project_data.get("profiles", {})
+        project_profile = project_profiles.get(selected_profile, {}) if isinstance(project_profiles, dict) else {}
+        if isinstance(project_profile, dict):
+            _apply_project_dict(config, project_profile)
+        config.active_profile = selected_profile
 
     # 3. Environment variables (highest file priority)
     env_key = os.environ.get("DEEPSEEK_API_KEY", "")
@@ -154,6 +173,9 @@ def load_config(cwd: Path | None = None) -> AppConfig:
     env_theme = os.environ.get("DEEPSEEK_THEME", "")
     if env_theme:
         config.theme = env_theme
+    env_provider = os.environ.get("DEEPSEEK_PROVIDER", "")
+    if env_provider:
+        config.provider = env_provider
 
     # 4. Load AGENTS.md if present in project
     if cwd:
@@ -162,18 +184,35 @@ def load_config(cwd: Path | None = None) -> AppConfig:
     return config
 
 
+def _apply_project_dict(config: AppConfig, data: dict[str, Any]) -> None:
+    _apply_dict(config, {key: value for key, value in data.items() if key not in {"approval", "sandbox", "shell"}})
+    constraints: dict[str, Any] = {}
+    for key in ("approval", "sandbox"):
+        if key in data:
+            constraints[key] = data[key]
+    shell = data.get("shell")
+    if isinstance(shell, dict):
+        for key in ("allow", "deny"):
+            if key in shell:
+                constraints[f"{key}_commands"] = shell[key]
+    if constraints:
+        config.project_permissions.append(constraints)
+
+
 def _apply_dict(config: AppConfig, data: dict[str, Any]) -> None:
     """Apply a TOML dict to the config dataclass."""
     if not data:
         return
 
     # Top-level scalar fields
-    for key in ("model", "api_key", "base_url", "approval", "sandbox", "theme", "layout"):
+    for key in ("model", "api_key", "base_url", "approval", "sandbox", "theme", "layout", "active_profile"):
         if key in data and isinstance(data[key], str):
             setattr(config, key, data[key])
 
     if "max_steps" in data and isinstance(data["max_steps"], int):
         config.max_steps = data["max_steps"]
+    if "max_context_chars" in data and isinstance(data["max_context_chars"], int):
+        config.max_context_chars = data["max_context_chars"]
     if "temperature" in data and isinstance(data["temperature"], (int, float)):
         config.temperature = float(data["temperature"])
     if "stream" in data and isinstance(data["stream"], bool):
@@ -263,7 +302,7 @@ def _load_agents_md(cwd: Path) -> str:
             try:
                 content = path.read_text(encoding="utf-8").strip()
                 if content:
-                    return content[:8192]  # cap at 8KB to avoid blowing context
+                    return content[:8192]  # cap at 8192 characters
             except (OSError, UnicodeDecodeError):
                 continue
     return ""
@@ -285,8 +324,9 @@ def save_user_config(config: AppConfig) -> Path:
         lines.append(f'theme = "{config.theme}"')
     if config.max_steps:
         lines.append(f"max_steps = {config.max_steps}")
-    if config.temperature:
-        lines.append(f"temperature = {config.temperature}")
+    lines.append(f"temperature = {config.temperature}")
+    lines.append(f"max_context_chars = {config.max_context_chars}")
+    lines.append(f"stream = {str(config.stream).lower()}")
     if config.quiet:
         lines.append("quiet = true")
 
